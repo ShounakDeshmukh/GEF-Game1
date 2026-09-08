@@ -1,4 +1,4 @@
-Art: Kenney Pixel Platformer pack in `assets/kenney_pixel-platformer/` (CC0, see its License.txt).
+Art: [Kenney Platformer Pack](https://kenney.nl/assets/new-platformer-pack)(CC0).
 
 ```sh
 cmake --preset debug        # or: release
