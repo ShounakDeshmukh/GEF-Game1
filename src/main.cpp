@@ -259,7 +259,7 @@ int main() {
       // Goal collision response: if the player touches the goal, it is logged
       const bool onGoal = physics.isCollision(scene, player, goal);
       if (onGoal && !touchingGoal) {
-        engine::log::info("flag reached, level complete, now play agin :)");
+        engine::log::info("flag reached, level complete, now play again :)");
         respawn();
       }
       touchingGoal = onGoal;
