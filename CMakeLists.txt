@@ -6,13 +6,18 @@ include(FetchContent)
 FetchContent_Declare(
     engine
     GIT_REPOSITORY https://github.com/ShounakDeshmukh/GEF_engine.git
-    GIT_TAG v0.1.0
+    GIT_TAG v0.2.0
     GIT_SHALLOW TRUE
     SYSTEM
 )
 FetchContent_MakeAvailable(engine)
 
-add_executable(game src/main.cpp)
+add_executable(game
+    src/main.cpp
+    src/world.cpp
+    src/server.cpp
+    src/client.cpp
+)
 target_link_libraries(game PRIVATE engine::engine)
 target_compile_features(game PRIVATE cxx_std_20)
 set_target_properties(game PROPERTIES CXX_EXTENSIONS OFF)
