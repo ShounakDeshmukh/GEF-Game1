@@ -34,6 +34,11 @@ constexpr float jumpSpeed = 1020.f;
 
 constexpr int joinAttempts = 5;
 
+// Player N is drawn with sheet (N - 1) % 4, so every window agrees on colors.
+constexpr std::array<const char *, 4> playerSheetFiles{
+    "sheet_player.png", "sheet_player_blue.png", "sheet_player_pink.png",
+    "sheet_player_orange.png"};
+
 // Drawn by main outside the Scene, so they need text-cache ids no entity uses.
 constexpr engine::EntityId hudTextId =
     std::numeric_limits<engine::EntityId>::max();
@@ -179,9 +184,17 @@ template <class Link> int play(Link &link) {
       renderer.loadTexture(assetDir + "png/background_clouds.png");
   const engine::TextureId terrainTexture =
       renderer.loadTexture(assetDir + "png/terrain_grass_block.png");
-  const engine::SpriteSheetId playerSheet = renderer.createSpriteSheet(
-      renderer.loadTexture(assetDir + "png/sheet_player.png"),
-      engine::SpriteSheetLayout::grid({playerSize, playerSize}, 5));
+  std::array<engine::SpriteSheetId, playerSheetFiles.size()> playerSheets{};
+  std::ranges::transform(
+      playerSheetFiles, playerSheets.begin(), [&](const char *file) {
+        return renderer.createSpriteSheet(
+            renderer.loadTexture(assetDir + "png/" + file),
+            engine::SpriteSheetLayout::grid({playerSize, playerSize}, 5));
+      });
+  const auto sheetFor = [&playerSheets](engine::ClientId id) {
+    return playerSheets[(id - 1) % playerSheets.size()];
+  };
+  const engine::SpriteSheetId playerSheet = sheetFor(self);
   const engine::SpriteSheetId beeSheet = renderer.createSpriteSheet(
       renderer.loadTexture(assetDir + "png/sheet_bee.png"),
       engine::SpriteSheetLayout::grid({world::beeSize, world::beeSize}, 2));
@@ -293,7 +306,11 @@ template <class Link> int play(Link &link) {
       const auto [entry, added] = remoteStates.try_emplace(remote, state);
       if (added || entry->second != state) {
         entry->second = state;
-        scene.addSpriteAnimation(remote, animationFor(state, playerSheet));
+        // Every remote RigidBody came from the replicator, so it has a NetId.
+        const engine::NetId netId =
+            link.session.replicator().netIdOf(remote).value();
+        scene.addSpriteAnimation(
+            remote, animationFor(state, sheetFor(engine::ownerOf(netId))));
       }
       scene.removeRigidBody(remote);
     }
