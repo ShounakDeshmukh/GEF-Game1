@@ -164,6 +164,8 @@ template <class Link> int play(Link &link) {
     engine::log::error("could not join the server");
     return 1;
   }
+  // Heartbeats start now, so the server does not time us out while loading.
+  link.session.start();
   const engine::ClientId self = link.session.id();
 
   engine::Window window(fmt::format("Parkour - P{} ({})", self, Link::mode),
@@ -374,7 +376,6 @@ template <class Link> int play(Link &link) {
   };
 
   engine::SimulationThread sim(std::move(scene), gameTime, onTick);
-  link.session.start();
   sim.start();
   engine::log::info("P{} joined in {} mode. A/D or arrows to move, Space/W/Up "
                     "to jump, P pause, 1/2/3 speed 0.5x/1x/2x, F scaling mode",
