@@ -9,8 +9,8 @@
 namespace {
 
 constexpr std::string_view usage =
-    "usage: game --server [port] | --client [endpoint] | --p2p [endpoint]\n"
-    "  port defaults to 5555, endpoint to tcp://localhost:5555";
+    "usage: game --server [port] | --client [host:port] | --p2p [host:port]\n"
+    "  port defaults to 5555, host:port to localhost:5555";
 
 } // namespace
 
@@ -21,9 +21,11 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   const std::string_view mode = argv[1];
+  // ZeroMQ needs a transport prefix; accept a bare host:port too.
+  const std::string address =
+      argc == 3 ? argv[2] : "localhost:" + std::to_string(defaultPort);
   const std::string endpoint =
-      argc == 3 ? std::string(argv[2])
-                : "tcp://localhost:" + std::to_string(defaultPort);
+      address.find("://") == std::string::npos ? "tcp://" + address : address;
   try {
     if (mode == "--server") {
       return runServer(argc == 3 ? std::stoi(argv[2]) : defaultPort);
