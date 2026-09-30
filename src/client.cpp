@@ -34,13 +34,16 @@ constexpr float jumpSpeed = 1020.f;
 
 constexpr int joinAttempts = 5;
 
-// Drawn by main outside the Scene, so it needs a text-cache id no entity uses.
+// Drawn by main outside the Scene, so they need text-cache ids no entity uses.
 constexpr engine::EntityId hudTextId =
     std::numeric_limits<engine::EntityId>::max();
+constexpr engine::EntityId disconnectedTextId = hudTextId - 1;
 constexpr glm::vec2 hudPosition{24.f, 24.f};
 constexpr float hudFontSize = 40.f;
+constexpr glm::vec2 disconnectedPosition{hudPosition.x,
+                                         hudPosition.y + 1.5f * hudFontSize};
 constexpr engine::Color hudColor{20, 30, 60, 255};
-constexpr engine::Color hudPausedColor{200, 30, 30, 255};
+constexpr engine::Color hudAlertColor{200, 30, 30, 255};
 
 constexpr std::array<std::pair<SC::SDL_Scancode, float>, 3> speedKeys{{
     {SC::SDL_SCANCODE_1, 0.5f},
@@ -380,6 +383,7 @@ template <class Link> int play(Link &link) {
   // main thread: input capture, time control requests and rendering.
   std::optional<engine::RenderFrame> frame;
   engine::KeyboardState previous;
+  bool online = true;
   while (!window.shouldClose()) {
     window.pollEvents();
     const engine::KeyboardState keyboard =
@@ -406,6 +410,15 @@ template <class Link> int play(Link &link) {
       engine::log::error("simulation failed; exiting");
       break;
     }
+    // Goes false after kDefaultClientTimeoutMs without a server reply.
+    if (link.session.connected() != online) {
+      online = !online;
+      if (online) {
+        engine::log::info("reconnected to the server");
+      } else {
+        engine::log::warn("lost the server: platforms and the bee are frozen");
+      }
+    }
 
     renderer.clear({0, 0, 0, 255});
     renderer.drawTexture(
@@ -422,8 +435,15 @@ template <class Link> int play(Link &link) {
       renderer.drawText(hudTextId,
                         {.val = hud,
                          .font = hudFont,
-                         .color = status.paused ? hudPausedColor : hudColor},
+                         .color = status.paused ? hudAlertColor : hudColor},
                         hudPosition);
+    }
+    if (!online) {
+      renderer.drawText(disconnectedTextId,
+                        {.val = "DISCONNECTED FROM SERVER",
+                         .font = hudFont,
+                         .color = hudAlertColor},
+                        disconnectedPosition);
     }
     renderer.present();
   }
