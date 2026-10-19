@@ -6,7 +6,7 @@ include(FetchContent)
 FetchContent_Declare(
     engine
     GIT_REPOSITORY https://github.com/ShounakDeshmukh/GEF_engine.git
-    GIT_TAG v0.2.0
+    GIT_TAG feat/m3
     GIT_SHALLOW TRUE
     SYSTEM
 )
