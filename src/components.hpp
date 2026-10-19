@@ -6,3 +6,6 @@
 
 // A start and respawn location: the player's top-left on spawn.
 struct SpawnPoint {};
+
+// Touching one sends the player back to a spawn point.
+struct DeathZone {};

@@ -252,6 +252,18 @@ template <class Link> int play(Link &link) {
         terrain.push_back(block);
         break;
       }
+      case level::deathZone: {
+        const int run = world::runAt(line, column);
+        if (run == 0) {
+          break;
+        }
+        const engine::EntityId zone = scene.createEntity();
+        scene.transform(zone).position = world::cellPosition(column, row);
+        scene.addCollider(
+            zone, {.size = {static_cast<float>(run) * tileSize, tileSize}});
+        scene.add<DeathZone>(zone);
+        break;
+      }
       case level::playerSpawn: {
         // Bottom-align the taller player sprite to the cell it is standing in.
         const engine::EntityId spawn = scene.createEntity();
@@ -416,8 +428,17 @@ template <class Link> int play(Link &link) {
       engine::log::info("hit the bee, back to the last spawn point");
       respawn(respawnFor(spawns, position.x));
     }
-    if (position.y > static_cast<float>(windowHeight)) {
-      engine::log::info("fell into a pit, back to the last spawn point");
+    bool inDeathZone = false;
+    scene.each<DeathZone>([&](engine::EntityId zone, DeathZone &) {
+      inDeathZone = inDeathZone || physics.isCollision(scene, player, zone);
+    });
+    if (inDeathZone) {
+      engine::log::info("fell into a death zone, back to the last spawn point");
+      respawn(respawnFor(spawns, position.x));
+    }
+    // A fast fall could tunnel through a zone in one tick.
+    if (position.y > world::levelHeight + playerSize) {
+      engine::log::info("fell out of the level, back to the last spawn point");
       respawn(respawnFor(spawns, position.x));
     }
     const bool onGoal = physics.isCollision(scene, player, goal);
