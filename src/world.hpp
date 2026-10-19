@@ -1,5 +1,7 @@
 #pragma once
 
+#include "level.hpp"
+
 #include <engine/engine.hpp>
 
 #include <cstdint>
@@ -14,6 +16,8 @@ constexpr float playerSize = 120.f;
 constexpr float beeSize = 60.f;
 constexpr float goalSize = 60.f;
 constexpr std::int64_t ticksPerSecond = 60;
+constexpr float levelWidth = level::columns * tileSize;
+constexpr float levelHeight = level::rows * tileSize;
 
 enum class Kind { platform, bee };
 
@@ -35,6 +39,10 @@ struct Art {
 };
 
 glm::vec2 cellPosition(int column, int row);
+
+// Length of the run of equal cells starting at column, or 0 if column is not
+// the run's first cell.
+int runAt(const char *line, int column);
 
 glm::vec2 positionAt(const Motion &motion, float seconds);
 

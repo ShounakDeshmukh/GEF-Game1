@@ -30,6 +30,18 @@ glm::vec2 cellPosition(int column, int row) {
           static_cast<float>(row) * tileSize};
 }
 
+int runAt(const char *line, int column) {
+  const char cell = line[column];
+  if (column > 0 && line[column - 1] == cell) {
+    return 0;
+  }
+  int length = 1;
+  while (column + length < level::columns && line[column + length] == cell) {
+    ++length;
+  }
+  return length;
+}
+
 glm::vec2 positionAt(const Motion &motion, float seconds) {
   return motion.origin +
          glm::vec2{std::sin(seconds * motion.rate) * motion.extent.x,
@@ -52,14 +64,9 @@ std::vector<Motion> motions() {
                      beeRate,
                      beeHarmonic};
       }
-      // Only the first cell of a run starts a platform.
-      if (!isMover(cell) || (column > 0 && line[column - 1] == cell)) {
+      const int length = isMover(cell) ? runAt(line, column) : 0;
+      if (length == 0) {
         continue;
-      }
-      int length = 1;
-      while (column + length < level::columns &&
-             line[column + length] == cell) {
-        ++length;
       }
       const bool horizontal = cell == level::horizontalMover;
       result.push_back({Kind::platform,

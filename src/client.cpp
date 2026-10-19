@@ -34,6 +34,10 @@ constexpr float jumpSpeed = 1020.f;
 
 constexpr int joinAttempts = 5;
 
+constexpr float ledgeHeight = 20.f;
+constexpr engine::Color ledgeColor{139, 94, 60, 255};
+constexpr engine::Color stoneColor{120, 124, 135, 255};
+
 // Player N is drawn with sheet (N - 1) % 4, so every window agrees on colors.
 constexpr std::array<const char *, 4> playerSheetFiles{
     "sheet_player.png", "sheet_player_blue.png", "sheet_player_pink.png",
@@ -211,8 +215,9 @@ template <class Link> int play(Link &link) {
   glm::vec2 playerSpawn{0.f, 0.f};
   engine::EntityId goal = 0;
   for (int row = 0; row < level::rows; ++row) {
+    const char *line = level::map[static_cast<std::size_t>(row)];
     for (int column = 0; column < level::columns; ++column) {
-      switch (level::map[static_cast<std::size_t>(row)][column]) {
+      switch (const char cell = line[column]) {
       case level::solid: {
         const engine::EntityId tile = scene.createEntity();
         scene.transform(tile).position = world::cellPosition(column, row);
@@ -220,6 +225,23 @@ template <class Link> int play(Link &link) {
             tile, {.size = {tileSize, tileSize}, .texture = terrainTexture});
         scene.addCollider(tile, {.size = {tileSize, tileSize}});
         terrain.push_back(tile);
+        break;
+      }
+      case level::ledge:
+      case level::stone: {
+        const int run = world::runAt(line, column);
+        if (run == 0) {
+          break;
+        }
+        const bool isLedge = cell == level::ledge;
+        const glm::vec2 size{static_cast<float>(run) * tileSize,
+                             isLedge ? ledgeHeight : tileSize};
+        const engine::EntityId block = scene.createEntity();
+        scene.transform(block).position = world::cellPosition(column, row);
+        scene.addShape(
+            block, {.size = size, .color = isLedge ? ledgeColor : stoneColor});
+        scene.addCollider(block, {.size = size});
+        terrain.push_back(block);
         break;
       }
       case level::playerSpawn:
