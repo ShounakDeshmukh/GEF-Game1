@@ -18,8 +18,8 @@ They can join at any time.
 
 `port` defaults to `5555` and `host:port` to `localhost:5555`, e.g. `--client 192.168.1.20:5555`.
 The server logs joins and leaves, and each client's updates/s once a second.
-Each window's top-left corner shows its player id, mode, and speed or `PAUSED`, plus
-`DISCONNECTED FROM SERVER` if the server stops replying.
+Each window's top-left corner shows its player id, mode, speed or `PAUSED`, and the camera's x,
+plus `DISCONNECTED FROM SERVER` if the server stops replying.
 
 ## Controls
 
@@ -28,3 +28,26 @@ Each window's top-left corner shows its player id, mode, and speed or `PAUSED`, 
 - Pause / unpause: `P`
 - Speed 0.5x / 1x / 2x: `1` / `2` / `3`
 - Toggle scaling mode: `F`
+
+## Level objects
+
+The level is two screens wide (`src/level.hpp`). The camera scrolls when the player touches one of
+the hidden scroll boundaries near the edges of the view. Falling into a pit respawns the player at
+the last spawn point passed.
+
+| Object | Map char | Components | Visible |
+|---|---|---|---|
+| Grass tile | `#` | Transform, Shape (texture), Collider | yes |
+| Wooden ledge | `=` | Transform, Shape (color), Collider | yes |
+| Stone block | `S` | Transform, Shape (color), Collider | yes |
+| Moving platform | `H`, `V` | Transform, Shape, Collider; server-replicated | yes |
+| Bee | `B` | Transform, Shape, Collider, SpriteAnimation; server-replicated | yes |
+| Spawn point | `P` | Transform, `SpawnPoint` | no |
+| Death zone | `X` | Transform, Collider, `DeathZone` | no |
+| Scroll boundary | none, 2 per client | Transform, Collider, `ScrollBoundary` | no |
+| Camera | none, 1 per client | Transform, `Camera` | no |
+
+Hidden objects are entities with no Shape, so the renderer never draws them. `SpawnPoint`,
+`DeathZone`, `ScrollBoundary` and `Camera` are game-defined components in `src/components.hpp`;
+the engine stores them without knowing their types. None of them are replicated: every client
+builds the same level locally and scrolls its own view.
