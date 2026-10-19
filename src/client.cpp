@@ -1,3 +1,4 @@
+#include "components.hpp"
 #include "level.hpp"
 #include "modes.hpp"
 #include "world.hpp"
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -136,6 +138,13 @@ template <class Link> bool joinServer(Link &link) {
   return false;
 }
 
+// The rightmost spawn at or left of x, else the leftmost. spawns is sorted by
+// x.
+glm::vec2 respawnFor(const std::vector<glm::vec2> &spawns, float x) {
+  const auto past = std::ranges::upper_bound(spawns, x, {}, &glm::vec2::x);
+  return past == spawns.begin() ? spawns.front() : *std::prev(past);
+}
+
 // Pushes player out of other along the shallower overlap axis. True if it
 // landed on top.
 bool resolveCollision(engine::Scene &scene,
@@ -212,7 +221,6 @@ template <class Link> int play(Link &link) {
 
   // Static level: built identically by every client and never replicated.
   std::vector<engine::EntityId> terrain;
-  glm::vec2 playerSpawn{0.f, 0.f};
   engine::EntityId goal = 0;
   for (int row = 0; row < level::rows; ++row) {
     const char *line = level::map[static_cast<std::size_t>(row)];
@@ -244,11 +252,14 @@ template <class Link> int play(Link &link) {
         terrain.push_back(block);
         break;
       }
-      case level::playerSpawn:
+      case level::playerSpawn: {
         // Bottom-align the taller player sprite to the cell it is standing in.
-        playerSpawn =
+        const engine::EntityId spawn = scene.createEntity();
+        scene.transform(spawn).position =
             world::cellPosition(column, row + 1) - glm::vec2{0.f, playerSize};
+        scene.add<SpawnPoint>(spawn);
         break;
+      }
       case level::goal: {
         goal = scene.createEntity();
         scene.transform(goal).position = world::cellPosition(column, row);
@@ -263,6 +274,19 @@ template <class Link> int play(Link &link) {
       }
     }
   }
+
+  // Spawn points never move, so the sim thread can take a copy.
+  std::vector<glm::vec2> spawns;
+  scene.each<SpawnPoint>([&](engine::EntityId id, SpawnPoint &) {
+    spawns.push_back(scene.transform(id).position);
+  });
+  std::ranges::sort(spawns, {}, &glm::vec2::x);
+  if (spawns.size() < 2) {
+    engine::log::error("the level needs at least two spawn points");
+    return 1;
+  }
+  // Players alternate between the first two, so they don't start stacked.
+  const glm::vec2 startSpawn = spawns[(self - 1) % 2];
 
   // Server-driven objects: pre-built with textures, then bound to the server's
   // NetIds so its snapshots move them instead of spawning untextured copies.
@@ -285,7 +309,7 @@ template <class Link> int play(Link &link) {
   // The only entity this process owns; every other RigidBody in the Scene
   // belongs to a remote player.
   const engine::EntityId player = scene.createEntity();
-  scene.transform(player).position = playerSpawn;
+  scene.transform(player).position = startSpawn;
   scene.addShape(player, {.size = {playerSize, playerSize}});
   scene.addSpriteAnimation(player,
                            animationFor(PlayerState::idle, playerSheet));
@@ -381,25 +405,25 @@ template <class Link> int play(Link &link) {
       }
     }
 
-    const auto respawn = [&]() {
-      position = playerSpawn;
+    const auto respawn = [&](glm::vec2 at) {
+      position = at;
       body.velocity = {0.f, 0.f};
       grounded = false;
       riding.reset();
     };
 
     if (physics.isCollision(scene, player, bee)) {
-      engine::log::info("hit the bee, back to the start");
-      respawn();
+      engine::log::info("hit the bee, back to the last spawn point");
+      respawn(respawnFor(spawns, position.x));
     }
     if (position.y > static_cast<float>(windowHeight)) {
-      engine::log::info("fell into a pit, back to the start");
-      respawn();
+      engine::log::info("fell into a pit, back to the last spawn point");
+      respawn(respawnFor(spawns, position.x));
     }
     const bool onGoal = physics.isCollision(scene, player, goal);
     if (onGoal && !touchingGoal) {
       engine::log::info("flag reached, level complete, now play again :)");
-      respawn();
+      respawn(startSpawn);
     }
     touchingGoal = onGoal;
 
