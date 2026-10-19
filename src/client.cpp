@@ -36,6 +36,12 @@ constexpr float jumpSpeed = 1020.f;
 
 constexpr int joinAttempts = 5;
 
+// The camera only scrolls once the player leaves the middle 720px of the view.
+constexpr float viewWidth = static_cast<float>(windowWidth);
+constexpr float scrollMargin = 600.f;
+// Boundaries reach far past the level, so a respawn anywhere still touches one.
+constexpr float boundaryReach = 8000.f;
+
 constexpr float ledgeHeight = 20.f;
 constexpr engine::Color ledgeColor{139, 94, 60, 255};
 constexpr engine::Color stoneColor{120, 124, 135, 255};
@@ -143,6 +149,15 @@ template <class Link> bool joinServer(Link &link) {
 glm::vec2 respawnFor(const std::vector<glm::vec2> &spawns, float x) {
   const auto past = std::ranges::upper_bound(spawns, x, {}, &glm::vec2::x);
   return past == spawns.begin() ? spawns.front() : *std::prev(past);
+}
+
+// Puts the two hidden scroll boundaries just inside the view's edges.
+void placeBoundaries(engine::Scene &scene, engine::EntityId left,
+                     engine::EntityId right, float cameraX) {
+  scene.transform(left).position = {cameraX + scrollMargin - boundaryReach,
+                                    -boundaryReach};
+  scene.transform(right).position = {cameraX + viewWidth - scrollMargin,
+                                     -boundaryReach};
 }
 
 // Pushes player out of other along the shallower overlap axis. True if it
@@ -329,6 +344,22 @@ template <class Link> int play(Link &link) {
   scene.addRigidBody(player);
   link.session.replicator().track(player);
 
+  // Local view state: never replicated, every client scrolls on its own.
+  const engine::EntityId cameraEntity = scene.createEntity();
+  scene.add<Camera>(cameraEntity);
+  const auto addBoundary = [&scene](ScrollBoundary::Side side) {
+    const engine::EntityId boundary = scene.createEntity();
+    scene.addCollider(
+        boundary,
+        {.size = {boundaryReach, world::levelHeight + 2 * boundaryReach}});
+    scene.add<ScrollBoundary>(boundary, {side});
+    return boundary;
+  };
+  const engine::EntityId leftBoundary = addBoundary(ScrollBoundary::Side::left);
+  const engine::EntityId rightBoundary =
+      addBoundary(ScrollBoundary::Side::right);
+  placeBoundaries(scene, leftBoundary, rightBoundary, 0.f);
+
   engine::Timeline realTime;
   engine::Timeline gameTime(realTime, world::ticksPerSecond);
 
@@ -448,6 +479,25 @@ template <class Link> int play(Link &link) {
     }
     touchingGoal = onGoal;
 
+    // Touching a boundary moves the camera just enough to put the player back
+    // on its edge; then the boundaries follow the view.
+    Camera &camera = *scene.get<Camera>(cameraEntity);
+    float cameraX = camera.offset.x;
+    scene.each<ScrollBoundary>(
+        [&](engine::EntityId boundary, const ScrollBoundary &edge) {
+          if (!physics.isCollision(scene, player, boundary)) {
+            return;
+          }
+          cameraX = edge.side == ScrollBoundary::Side::right
+                        ? position.x + playerSize - (viewWidth - scrollMargin)
+                        : position.x - scrollMargin;
+        });
+    cameraX = std::clamp(cameraX, 0.f, world::levelWidth - viewWidth);
+    if (cameraX != camera.offset.x) {
+      camera.offset.x = cameraX;
+      placeBoundaries(scene, leftBoundary, rightBoundary, cameraX);
+    }
+
     const PlayerState desired = stateFor(body.velocity, grounded);
     if (desired != playerState) {
       playerState = desired;
@@ -511,12 +561,14 @@ template <class Link> int play(Link &link) {
         {static_cast<float>(windowWidth), static_cast<float>(windowHeight)},
         true);
     if (frame) {
+      const glm::vec2 camera = frame->scene.get<Camera>(cameraEntity)->offset;
+      renderer.setCamera(camera);
       renderer.drawEntities(frame->scene);
       const engine::SimStatus &status = frame->status;
       const std::string hud =
           status.paused ? fmt::format("P{}  |  {}  |  PAUSED", self, Link::mode)
-                        : fmt::format("P{}  |  {}  |  {:.1f}x", self,
-                                      Link::mode, status.speed);
+                        : fmt::format("P{}  |  {}  |  {:.1f}x  |  cam {:.0f}",
+                                      self, Link::mode, status.speed, camera.x);
       renderer.drawText(hudTextId,
                         {.val = hud,
                          .font = hudFont,
