@@ -44,8 +44,6 @@ constexpr float scrollMargin = 600.f;
 constexpr float boundaryReach = 8000.f;
 
 constexpr float ledgeHeight = 20.f;
-constexpr engine::Color ledgeColor{139, 94, 60, 255};
-constexpr engine::Color stoneColor{120, 124, 135, 255};
 
 // Player N is drawn with sheet (N - 1) % 4, so every window agrees on colors.
 constexpr std::array<const char *, 4> playerSheetFiles{
@@ -213,6 +211,10 @@ template <class Link> int play(Link &link) {
       renderer.loadTexture(assetDir + "png/background_clouds.png");
   const engine::TextureId terrainTexture =
       renderer.loadTexture(assetDir + "png/terrain_grass_block.png");
+  const engine::TextureId ledgeTexture =
+      renderer.loadTexture(assetDir + "png/bridge.png");
+  const engine::TextureId stoneTexture =
+      renderer.loadTexture(assetDir + "png/terrain_stone_block.png");
   std::array<engine::SpriteSheetId, playerSheetFiles.size()> playerSheets{};
   std::ranges::transform(
       playerSheetFiles, playerSheets.begin(), [&](const char *file) {
@@ -262,8 +264,10 @@ template <class Link> int play(Link &link) {
                              isLedge ? ledgeHeight : tileSize};
         const engine::EntityId block = scene.createEntity();
         scene.transform(block).position = world::cellPosition(column, row);
-        scene.addShape(
-            block, {.size = size, .color = isLedge ? ledgeColor : stoneColor});
+        scene.addShape(block,
+                       {.size = size,
+                        .texture = isLedge ? ledgeTexture : stoneTexture,
+                        .tiled = true});
         scene.addCollider(block, {.size = size});
         terrain.push_back(block);
         break;

@@ -38,8 +38,8 @@ the last spawn point passed.
 | Object | Map char | Components | Visible |
 |---|---|---|---|
 | Grass tile | `#` | Transform, Shape (texture), Collider | yes |
-| Wooden ledge | `=` | Transform, Shape (color), Collider | yes |
-| Stone block | `S` | Transform, Shape (color), Collider | yes |
+| Wooden ledge | `=` | Transform, Shape (tiled texture), Collider | yes |
+| Stone block | `S` | Transform, Shape (tiled texture), Collider | yes |
 | Moving platform | `H`, `V` | Transform, Shape, Collider; server-replicated | yes |
 | Bee | `B` | Transform, Shape, Collider, SpriteAnimation; server-replicated | yes |
 | Spawn point | `P` | Transform, `SpawnPoint` | no |
