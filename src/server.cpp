@@ -7,6 +7,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -62,23 +63,32 @@ int runServer(int port) {
   engine::Scene scene;
   const std::vector<engine::EntityId> objects =
       world::spawn(scene, motions, std::nullopt);
+  std::vector<engine::NetId> netIds;
+  netIds.reserve(objects.size());
   for (const engine::EntityId object : objects) {
-    server.replicator().track(object);
+    netIds.push_back(server.replicator().track(object));
   }
 
   engine::Timeline realTime;
   engine::Timeline gameTime(realTime, world::ticksPerSecond);
 
-  // world subsystem -> sim: only the newest positions matter.
-  engine::threading::LatestValue<std::vector<glm::vec2>> worldSlot;
+  // world subsystem -> sim: only the newest positions matter. tick is the one
+  // they were computed for, which a sim tick that picks them up may not match.
+  struct WorldUpdate {
+    std::int64_t tick;
+    std::vector<glm::vec2> positions;
+  };
+  engine::threading::LatestValue<WorldUpdate> worldSlot;
 
   // sim thread: owns the Scene and every replicator call.
   engine::SimulationThread sim(
       std::move(scene), gameTime, [&](const engine::TickContext &ctx) {
         server.applyClientStates(ctx.scene);
-        if (const auto positions = worldSlot.take()) {
+        if (const auto update = worldSlot.take()) {
           for (std::size_t i = 0; i < objects.size(); ++i) {
-            ctx.scene.transform(objects[i]).position = (*positions)[i];
+            ctx.scene.transform(objects[i]).position = update->positions[i];
+            server.replicator().setExtra(netIds[i],
+                                         world::encodeStamp(update->tick));
           }
         }
         server.publishScene(ctx.scene, ctx.tick);
@@ -94,7 +104,7 @@ int runServer(int port) {
         for (const world::Motion &motion : motions) {
           positions.push_back(world::positionAt(motion, seconds));
         }
-        worldSlot.publish(std::move(positions));
+        worldSlot.publish({ctx.tick, std::move(positions)});
       });
 
   std::signal(SIGINT, requestStop);

@@ -1,4 +1,5 @@
 #include "components.hpp"
+#include "interpolation.hpp"
 #include "level.hpp"
 #include "modes.hpp"
 #include "world.hpp"
@@ -342,7 +343,7 @@ template <class Link> int play(Link &link) {
                            animationFor(PlayerState::idle, playerSheet));
   scene.addCollider(player, {.size = {playerSize, playerSize}});
   scene.addRigidBody(player);
-  link.session.replicator().track(player);
+  const engine::NetId playerNetId = link.session.replicator().track(player);
 
   // Local view state: never replicated, every client scrolls on its own.
   const engine::EntityId cameraEntity = scene.createEntity();
@@ -376,6 +377,8 @@ template <class Link> int play(Link &link) {
   }
   std::unordered_map<engine::EntityId, PlayerState> remoteStates;
   std::vector<engine::EntityId> remotes;
+  Interpolator interpolator;
+  std::vector<engine::EntityId> interpolated; // reused every tick
 
   auto onTick = [&](const engine::TickContext &ctx) {
     engine::Scene &scene = ctx.scene;
@@ -406,6 +409,29 @@ template <class Link> int play(Link &link) {
     std::erase_if(remoteStates, [&scene](const auto &entry) {
       return !scene.hasEntity(entry.first);
     });
+
+    // Snapshots land unevenly, so remote entities are drawn a few ticks behind
+    // from their stamped positions instead of jumping to the newest one.
+    const engine::networking::sceneReplicator &replicator =
+        link.session.replicator();
+    interpolated.assign(objects.begin(), objects.end());
+    for (const auto &[remote, state] : remoteStates) {
+      interpolated.push_back(remote);
+    }
+    for (const engine::EntityId entity : interpolated) {
+      const engine::NetId netId = replicator.netIdOf(entity).value();
+      if (const auto stamp = world::decodeStamp(replicator.extraOf(netId))) {
+        interpolator.record(entity, engine::ownerOf(netId), *stamp,
+                            scene.transform(entity).position);
+      }
+    }
+    interpolator.forgetMissing(scene);
+    interpolator.advance(Interpolator::Clock::now());
+    for (const engine::EntityId entity : interpolated) {
+      if (const auto at = interpolator.positionOf(entity)) {
+        scene.transform(entity).position = *at;
+      }
+    }
 
     // Carry the player along with the platform it stood on last tick.
     glm::vec2 &position = scene.transform(player).position;
@@ -506,6 +532,8 @@ template <class Link> int play(Link &link) {
     engine::advanceAnimations(scene, ctx.dt);
 
     // Once per tick, so the send rate follows this client's own Timeline.
+    link.session.replicator().setExtra(playerNetId,
+                                       world::encodeStamp(ctx.tick));
     link.push(scene, ctx.tick);
   };
 

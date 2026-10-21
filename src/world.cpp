@@ -2,6 +2,9 @@
 
 #include "level.hpp"
 
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 
@@ -47,6 +50,20 @@ glm::vec2 positionAt(const Motion &motion, float seconds) {
          glm::vec2{std::sin(seconds * motion.rate) * motion.extent.x,
                    std::sin(seconds * motion.rate * motion.yHarmonic) *
                        motion.extent.y};
+}
+
+engine::networking::Bytes encodeStamp(std::int64_t tick) {
+  const auto bytes = std::bit_cast<std::array<std::byte, sizeof tick>>(tick);
+  return {bytes.begin(), bytes.end()};
+}
+
+std::optional<std::int64_t> decodeStamp(const engine::networking::Bytes *extra) {
+  std::array<std::byte, sizeof(std::int64_t)> bytes;
+  if (extra == nullptr || extra->size() != bytes.size()) {
+    return std::nullopt;
+  }
+  std::ranges::copy(*extra, bytes.begin());
+  return std::bit_cast<std::int64_t>(bytes);
 }
 
 std::vector<Motion> motions() {

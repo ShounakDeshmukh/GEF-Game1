@@ -17,6 +17,7 @@ add_executable(game
     src/world.cpp
     src/server.cpp
     src/client.cpp
+    src/interpolation.cpp
 )
 target_link_libraries(game PRIVATE engine::engine)
 target_compile_features(game PRIVATE cxx_std_20)
