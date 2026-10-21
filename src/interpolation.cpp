@@ -12,8 +12,9 @@
 
 namespace {
 
-// Covers one late snapshot on each hop (owner -> server -> here).
-constexpr double delayTicks = 3.0;
+// Measured arrival jitter stays under one tick, so two ticks still leaves room
+// for a late snapshot.
+constexpr double delayTicks = 2.0;
 // Past this the playback time jumps instead of easing back, e.g. after a pause.
 constexpr double maxDriftTicks = 8.0;
 constexpr double driftCorrection = 0.1;
