@@ -50,6 +50,7 @@ glm::vec2 positionAt(const Motion &motion, float seconds);
 // extra bytes so receivers can interpolate on the owner's clock.
 engine::networking::Bytes encodeStamp(std::int64_t tick);
 std::optional<std::int64_t> decodeStamp(const engine::networking::Bytes *extra);
+std::optional<std::int64_t> decodeSentNs(const engine::networking::Bytes *extra);
 
 // Every moving object in level::map, in a fixed order (platforms in scan
 // order, then the bee). Index i is replicated as makeNetId(kServerId, i).

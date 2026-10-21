@@ -25,6 +25,10 @@ public:
   std::optional<glm::vec2> positionOf(engine::EntityId entity) const;
   // Drops entities no longer in scene, and owners with none left.
   void forgetMissing(const engine::Scene &scene);
+  std::optional<double> playbackTick(engine::ClientId owner) const {
+    const auto it = owners_.find(owner);
+    return it == owners_.end() ? std::nullopt : std::optional<double>{it->second.tick};
+  }
 
 private:
   struct Sample {

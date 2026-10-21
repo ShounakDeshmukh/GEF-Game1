@@ -59,10 +59,19 @@ engine::networking::Bytes encodeStamp(std::int64_t tick) {
 
 std::optional<std::int64_t> decodeStamp(const engine::networking::Bytes *extra) {
   std::array<std::byte, sizeof(std::int64_t)> bytes;
-  if (extra == nullptr || extra->size() != bytes.size()) {
+  if (extra == nullptr || extra->size() < bytes.size()) {
     return std::nullopt;
   }
-  std::ranges::copy(*extra, bytes.begin());
+  std::ranges::copy_n(extra->begin(), bytes.size(), bytes.begin());
+  return std::bit_cast<std::int64_t>(bytes);
+}
+
+std::optional<std::int64_t> decodeSentNs(const engine::networking::Bytes *extra) {
+  std::array<std::byte, 8> bytes;
+  if (extra == nullptr || extra->size() != 16) {
+    return std::nullopt;
+  }
+  std::ranges::copy_n(extra->begin() + 8, 8, bytes.begin());
   return std::bit_cast<std::int64_t>(bytes);
 }
 

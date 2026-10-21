@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <chrono>
+#include <deque>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -382,6 +385,13 @@ template <class Link> int play(Link &link) {
   std::unordered_map<engine::EntityId, PlayerState> remoteStates;
   std::vector<engine::EntityId> remotes;
   Interpolator interpolator;
+  // Latency probe: logs arrival and drawn delay of remote players' stamps.
+  struct Pending { std::int64_t tick; std::int64_t sentNs; };
+  std::unordered_map<engine::EntityId, std::deque<Pending>> pending;
+  std::unordered_map<engine::EntityId, std::int64_t> lastSeen;
+  std::vector<double> arrivals, displays;
+  auto nowNs = [] { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+  auto lastReport = std::chrono::steady_clock::now();
   std::vector<engine::EntityId> interpolated; // reused every tick
 
   auto onTick = [&](const engine::TickContext &ctx) {
@@ -427,6 +437,14 @@ template <class Link> int play(Link &link) {
       if (const auto stamp = world::decodeStamp(replicator.extraOf(netId))) {
         interpolator.record(entity, engine::ownerOf(netId), *stamp,
                             scene.transform(entity).position);
+        if (const auto sent = world::decodeSentNs(replicator.extraOf(netId))) {
+          auto [it, added] = lastSeen.try_emplace(entity, -1);
+          if (*stamp > it->second) {
+            it->second = *stamp;
+            arrivals.push_back((nowNs() - *sent) / 1e6);
+            pending[entity].push_back({*stamp, *sent});
+          }
+        }
       }
     }
     interpolator.forgetMissing(scene);
@@ -436,9 +454,40 @@ template <class Link> int play(Link &link) {
         scene.transform(entity).position = *at;
       }
     }
+    for (auto &[entity, queue] : pending) {
+      const auto netId = replicator.netIdOf(entity);
+      if (!netId) { queue.clear(); continue; }
+      const auto playback = interpolator.playbackTick(engine::ownerOf(*netId));
+      while (playback && !queue.empty() && static_cast<double>(queue.front().tick) <= *playback) {
+        displays.push_back((nowNs() - queue.front().sentNs) / 1e6);
+        queue.pop_front();
+      }
+    }
+    if (std::chrono::steady_clock::now() - lastReport >= std::chrono::seconds(1)) {
+      lastReport = std::chrono::steady_clock::now();
+      const auto stats = [](std::vector<double> &v) {
+        double sum = 0, mx = 0;
+        for (double x : v) { sum += x; mx = std::max(mx, x); }
+        const auto out = fmt::format("mean {:.1f} max {:.1f} ms (n={})", v.empty() ? 0.0 : sum / v.size(), mx, v.size());
+        v.clear();
+        return out;
+      };
+      const std::string a = stats(arrivals);
+      engine::log::info("LAT arrival {} | display {}", a, stats(displays));
+    }
 
     // Carry the player along with the platform it stood on last tick.
     glm::vec2 &position = scene.transform(player).position;
+    {
+      static int still = 0, uneven = 0, ticks = 0;
+      static glm::vec2 lastDelta{0.f};
+      const glm::vec2 d = scene.transform(platforms[0]).position - platformLast[0];
+      const float len = std::sqrt(d.x * d.x + d.y * d.y), lastLen = std::sqrt(lastDelta.x * lastDelta.x + lastDelta.y * lastDelta.y);
+      if (len == 0.f) ++still;
+      else if (lastLen > 0.f && std::abs(len - lastLen) > 0.5f * lastLen) ++uneven;
+      lastDelta = d;
+      if (++ticks == 600) { engine::log::info("SMOOTH still {} uneven {} /600", still, uneven); still = uneven = ticks = 0; }
+    }
     for (std::size_t i = 0; i < platforms.size(); ++i) {
       const glm::vec2 now = scene.transform(platforms[i]).position;
       if (riding == i) {
@@ -536,8 +585,13 @@ template <class Link> int play(Link &link) {
     engine::advanceAnimations(scene, ctx.dt);
 
     // Once per tick, so the send rate follows this client's own Timeline.
-    link.session.replicator().setExtra(playerNetId,
-                                       world::encodeStamp(ctx.tick));
+    {
+      engine::networking::Bytes extra = world::encodeStamp(ctx.tick);
+      const auto sentNs = nowNs();
+      const auto bytes = std::bit_cast<std::array<std::byte, 8>>(sentNs);
+      extra.insert(extra.end(), bytes.begin(), bytes.end());
+      link.session.replicator().setExtra(playerNetId, std::move(extra));
+    }
     link.push(scene, ctx.tick);
   };
 
