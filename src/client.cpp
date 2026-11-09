@@ -48,6 +48,9 @@ constexpr std::int64_t deathCamTicks = 4 * world::ticksPerSecond;
 constexpr float deathCamSpeed = 0.5f;
 constexpr std::int64_t deathCamFootageTicks =
     static_cast<std::int64_t>(deathCamTicks * deathCamSpeed);
+// The death holds on the live view this long first, so the player sees what hit
+// it and the recording catches it.
+constexpr std::int64_t deathPauseTicks = world::ticksPerSecond / 3;
 // The replay buffer is trimmed a keyframe at a time, so it keeps between 5 and
 // 6 s: always enough for the death cam.
 constexpr std::int64_t replayKeyframeTicks = world::ticksPerSecond;
@@ -493,6 +496,7 @@ template <class Link> int play(Link &link) {
   // replayed tick had here, by tick.
   std::deque<std::pair<std::int64_t, float>> cameraHistory;
   std::atomic<float> deathCamX{0.f}; // sim -> main
+  struct deathCamStart : ev::simpleEvent {};
   struct deathCamOver : ev::simpleEvent {};
   struct feedLineExpired : ev::simpleEvent {};
   struct pitfallDrop : ev::simpleEvent {
@@ -636,11 +640,20 @@ template <class Link> int play(Link &link) {
         scene.getRigidBody(player)->velocity = {0.f, 0.f};
         *scene.getSpriteAnimation(player) =
             engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
-        events.raise(ev::replayPlayStart{{}, events.now() - deathCamFootageTicks},
-                     events.now());
-        events.raise(deathCamOver{}, events.now() + deathCamTicks);
+        events.raise(deathCamStart{}, events.now() + deathPauseTicks);
+        events.raise(deathCamOver{},
+                     events.now() + deathPauseTicks + deathCamTicks);
       },
       /*fromNetwork=*/true);
+  // A round reset may have respawned the player during the pause.
+  events.subscribe<deathCamStart>(
+      [&](const deathCamStart &, engine::Scene &) {
+        if (!alive) {
+          events.raise(
+              ev::replayPlayStart{{}, events.now() - deathCamFootageTicks},
+              events.now());
+        }
+      });
   // A round reset may have respawned the player during the death cam.
   events.subscribe<deathCamOver>([&](const deathCamOver &, engine::Scene &scene) {
     if (!alive) {
