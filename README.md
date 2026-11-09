@@ -25,8 +25,8 @@ after 4 s.
 
 ## The race
 
-The first player to touch the flag wins the round. Two seconds later every player goes back to the
-start. Dying (the bee, spikes, or falling into a pit) replays the last 2 s in slow motion under a
+The first player to touch the flag wins the round. Every window shows a 3-second countdown, then
+every player goes back to the start. Dying (the bee, spikes, or falling into a pit) replays the last 2 s in slow motion under a
 `REPLAY` banner, then respawns the player at the last spawn point passed.
 
 The course is built to troll first-time runners, and every trap repeats the same way each run, so
@@ -84,7 +84,7 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
 | `spawnEvent` | client, after the death cam or a round reset | client: places the player, hides sprung spikes, resumes recording | local |
 | `goalReached` | client collision handler | server: the first claim of a round wins | client -> server |
-| `roundWon` | server | client: scoreboard, reset to the start | server -> all clients |
+| `roundWon` | server | client: scoreboard, restart countdown, reset to the start | server -> all clients |
 | `replayRecordStart`, `replayPlayStart`, `replayPlayStop` | client death and spawn handlers | engine `replayController` | local |
 
 The server accepts a `deathEvent` only for the sender's own player, and takes the `goalReached`

@@ -93,7 +93,8 @@ constexpr engine::EntityId hudTextId =
     std::numeric_limits<engine::EntityId>::max();
 constexpr engine::EntityId disconnectedTextId = hudTextId - 1;
 constexpr engine::EntityId replayBannerTextId = disconnectedTextId - 1;
-constexpr engine::EntityId firstFeedTextId = replayBannerTextId - 1;
+constexpr engine::EntityId countdownTextId = replayBannerTextId - 1;
+constexpr engine::EntityId firstFeedTextId = countdownTextId - 1;
 constexpr std::size_t feedLength = 4;
 // A feed line disappears this long after it was added.
 constexpr std::int64_t feedLineTicks = 4 * world::ticksPerSecond;
@@ -105,6 +106,10 @@ constexpr float bannerFontSize = 160.f;
 constexpr glm::vec2 replayBannerSize{487.f, 179.f};
 constexpr glm::vec2 replayBannerPosition{(windowWidth - replayBannerSize.x) / 2.f,
                                          (windowHeight - replayBannerSize.y) / 2.f};
+// "P1 WON - RESTARTING IN 3" (or "YOU WON ...") is about 900px wide at this
+// size; it sits above the replay banner so the two never overlap.
+constexpr float countdownFontSize = 80.f;
+constexpr glm::vec2 countdownPosition{(windowWidth - 900.f) / 2.f, 260.f};
 constexpr glm::vec2 disconnectedPosition{hudPosition.x,
                                          hudPosition.y + 1.5f * hudFontSize};
 constexpr engine::Color hudColor{20, 30, 60, 255};
@@ -288,6 +293,8 @@ template <class Link> int play(Link &link) {
       renderer.loadFont(assetDir + "fonts/SuperBouncer.ttf", hudFontSize);
   const engine::FontId bannerFont =
       renderer.loadFont(assetDir + "fonts/SuperBouncer.ttf", bannerFontSize);
+  const engine::FontId countdownFont =
+      renderer.loadFont(assetDir + "fonts/SuperBouncer.ttf", countdownFontSize);
 
   engine::Scene scene;
 
@@ -497,6 +504,13 @@ template <class Link> int play(Link &link) {
   std::deque<std::pair<std::int64_t, float>> cameraHistory;
   std::atomic<float> deathCamX{0.f}; // sim -> main
   struct deathCamStart : ev::simpleEvent {};
+  // Seconds until the round restarts; 0 clears the countdown.
+  struct restartCountdown : ev::simpleEvent {
+    int seconds = 0;
+  };
+  // sim -> main: the countdown on screen, and whose win it follows.
+  std::atomic<int> restartIn{0};
+  std::atomic<engine::ClientId> roundWinner{0};
   struct deathCamOver : ev::simpleEvent {};
   struct feedLineExpired : ev::simpleEvent {};
   struct pitfallDrop : ev::simpleEvent {
@@ -617,8 +631,18 @@ template <class Link> int play(Link &link) {
                                      : fmt::format("P{} won the race!", e.winner));
         events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
                      events.now() + race::resetDelayTicks);
+        roundWinner = e.winner;
+        for (int left = race::resetDelaySeconds; left >= 0; --left) {
+          events.raise(restartCountdown{{}, left},
+                       events.now() + (race::resetDelaySeconds - left) *
+                                          world::ticksPerSecond);
+        }
       },
       /*fromNetwork=*/true);
+  events.subscribe<restartCountdown>(
+      [&](const restartCountdown &e, engine::Scene &) {
+        restartIn = e.seconds;
+      });
   // Local deaths are raised by the collision handler and sent to the server;
   // remote ones are the server relaying other players' deaths.
   events.subscribe<ev::deathEvent>(
@@ -937,6 +961,18 @@ template <class Link> int play(Link &link) {
            .font = hudFont,
            .color = status.paused || replaying ? hudAlertColor : hudColor},
           hudPosition);
+      if (const int seconds = restartIn.load(); seconds > 0) {
+        const engine::ClientId winner = roundWinner.load();
+        renderer.drawText(
+            countdownTextId,
+            {.val = winner == self
+                        ? fmt::format("YOU WON - RESTARTING IN {}", seconds)
+                        : fmt::format("P{} WON - RESTARTING IN {}", winner,
+                                      seconds),
+             .font = countdownFont,
+             .color = hudAlertColor},
+            countdownPosition);
+      }
       if (replaying) {
         renderer.drawText(replayBannerTextId,
                           {.val = "REPLAY",

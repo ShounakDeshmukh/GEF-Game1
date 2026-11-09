@@ -14,7 +14,9 @@ namespace race {
 
 // Every client resets to the start this long after a win; the server reopens
 // the round at the same time.
-constexpr std::int64_t resetDelayTicks = 2 * world::ticksPerSecond;
+constexpr int resetDelaySeconds = 3;
+constexpr std::int64_t resetDelayTicks =
+    resetDelaySeconds * world::ticksPerSecond;
 
 // client -> server: this client's player touched the flag. Carries nothing:
 // the server takes the claimant from the session, not the payload.
