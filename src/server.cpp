@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,12 @@ namespace {
 
 namespace net = engine::networking;
 namespace ev = engine::events;
+
+// For beeBurstLength of every beeBurstEvery seconds, the bee flies its path
+// beeBurstSpeed times faster.
+constexpr float beeBurstEvery = 5.f;
+constexpr float beeBurstLength = 1.f;
+constexpr float beeBurstSpeed = 3.f;
 
 std::atomic<bool> stopRequested{false};
 
@@ -134,13 +141,18 @@ int runServer(int port) {
 
   // world thread: moves the platforms and the bee without touching the Scene.
   sim.addSubsystemThread(
-      "world", [&worldSlot, &motions,
-                seconds = 0.f](const engine::SubsystemContext &ctx) mutable {
+      "world", [&worldSlot, &motions, seconds = 0.f, beeSeconds = 0.f](
+                   const engine::SubsystemContext &ctx) mutable {
         seconds += ctx.dt;
+        // The bee keeps its own clock, so a burst speeds it along its path
+        // instead of making it jump.
+        const bool bursting = std::fmod(seconds, beeBurstEvery) < beeBurstLength;
+        beeSeconds += ctx.dt * (bursting ? beeBurstSpeed : 1.f);
         std::vector<glm::vec2> positions;
         positions.reserve(motions.size());
         for (const world::Motion &motion : motions) {
-          positions.push_back(world::positionAt(motion, seconds));
+          positions.push_back(world::positionAt(
+              motion, motion.kind == world::Kind::bee ? beeSeconds : seconds));
         }
         worldSlot.publish({ctx.tick, std::move(positions)});
       });
