@@ -469,7 +469,11 @@ template <class Link> int play(Link &link) {
   // Held move keys per direction: A and Left both count as left.
   int leftHeld = 0;
   int rightHeld = 0;
-  std::optional<float> jumpRequest; // this tick's jump speed, if any
+  // This tick's input: a jump key went down, and a Shift+jump chord completed.
+  // Chords ignore key order, so the chord alone (Shift pressed while a jump key
+  // is held) doesn't jump.
+  bool jumpPressed = false;
+  bool highJumpChord = false;
   struct Score {
     int wins = 0;
     int deaths = 0;
@@ -498,7 +502,6 @@ template <class Link> int play(Link &link) {
     engine::EntityId tile = 0;
   };
 
-  // A chorded jump-key press is the high jump below, so skip it here.
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
     const int change = e.pressed ? 1 : -1;
     switch (e.key) {
@@ -513,9 +516,7 @@ template <class Link> int play(Link &link) {
     case SC::SDL_SCANCODE_SPACE:
     case SC::SDL_SCANCODE_W:
     case SC::SDL_SCANCODE_UP:
-      if (e.pressed && !e.chorded) {
-        jumpRequest = jumpSpeed;
-      }
+      jumpPressed = jumpPressed || e.pressed;
       break;
     default:
       break;
@@ -523,9 +524,7 @@ template <class Link> int play(Link &link) {
   });
   events.subscribe<ev::inputChordEvent>(
       [&](const ev::inputChordEvent &e, engine::Scene &) {
-        if (e.pressed) {
-          jumpRequest = highJumpSpeed;
-        }
+        highJumpChord = highJumpChord || e.pressed;
       });
 
   // Only the local player's contacts with the bee, death zones, spikes, the
@@ -746,8 +745,8 @@ template <class Link> int play(Link &link) {
       engine::RigidBody &body = *scene.getRigidBody(player);
       body.velocity.x = (rightHeld > 0 ? moveSpeed : 0.f) -
                         (leftHeld > 0 ? moveSpeed : 0.f);
-      if (jumpRequest && grounded) {
-        body.velocity.y = -*jumpRequest;
+      if (jumpPressed && grounded) {
+        body.velocity.y = highJumpChord ? -highJumpSpeed : -jumpSpeed;
       }
 
       physics.step(scene, ctx.dt);
@@ -801,7 +800,8 @@ template <class Link> int play(Link &link) {
         *scene.getSpriteAnimation(player) = animationFor(desired, playerSheet);
       }
     }
-    jumpRequest.reset();
+    jumpPressed = false;
+    highJumpChord = false;
 
     // Touching a boundary moves the camera just enough to put the player back
     // on its edge; then the boundaries follow the view.
