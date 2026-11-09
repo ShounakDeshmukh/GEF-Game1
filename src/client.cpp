@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -41,7 +42,14 @@ constexpr float jumpSpeed = 1020.f;
 // Shift+Jump: about 1.5x the height of a normal jump.
 constexpr float highJumpSpeed = 1250.f;
 
-constexpr std::int64_t respawnDelayTicks = world::ticksPerSecond;
+// On death, the last few seconds replay before the player respawns.
+constexpr std::int64_t deathCamTicks = 4 * world::ticksPerSecond;
+// The replay buffer is trimmed a keyframe at a time, so it keeps between 5 and
+// 6 s: always enough for the death cam.
+constexpr std::int64_t replayKeyframeTicks = world::ticksPerSecond;
+constexpr std::size_t replayKeyframes = 6;
+constexpr std::size_t cameraHistoryLength =
+    replayKeyframes * replayKeyframeTicks;
 // deathEvent::cause for a fall; a bee death names the bee's NetId instead.
 constexpr std::uint32_t fellCause = 0;
 
@@ -420,6 +428,14 @@ template <class Link> int play(Link &link) {
   // sim -> main: the scoreboard then the feed, newest last.
   engine::threading::LatestValue<std::vector<std::string>> hudSlot;
 
+  // Built once sim exists, before it starts.
+  std::optional<engine::replay::replayController> replays;
+  // The replay Scene has no Camera, so the death cam looks up the view each
+  // replayed tick had here, by tick.
+  std::deque<std::pair<std::int64_t, float>> cameraHistory;
+  std::atomic<float> deathCamX{0.f}; // sim -> main
+  struct deathCamOver : ev::simpleEvent {};
+
   // A chorded jump-key press is the high jump below, so skip it here.
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
     const int change = e.pressed ? 1 : -1;
@@ -517,13 +533,28 @@ template <class Link> int play(Link &link) {
         scene.getRigidBody(player)->velocity = {0.f, 0.f};
         *scene.getSpriteAnimation(player) =
             engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
-        const glm::vec2 at = respawnFor(spawns, scene.transform(player).position.x);
-        events.raise(ev::spawnEvent{{}, playerNetId, self, at},
-                     events.now() + respawnDelayTicks);
+        events.raise(ev::replayPlayStart{{}, events.now() - deathCamTicks},
+                     events.now());
+        events.raise(deathCamOver{}, events.now() + deathCamTicks);
       },
       /*fromNetwork=*/true);
+  // A round reset may have respawned the player during the death cam.
+  events.subscribe<deathCamOver>([&](const deathCamOver &, engine::Scene &scene) {
+    if (!alive) {
+      events.raise(
+          ev::spawnEvent{{}, playerNetId, self,
+                         respawnFor(spawns, scene.transform(player).position.x)},
+          events.now());
+    }
+  });
   events.subscribe<ev::spawnEvent>(
       [&](const ev::spawnEvent &e, engine::Scene &scene) {
+        if (replays->playing()) {
+          events.raise(ev::replayPlayStop{}, events.now());
+        }
+        if (!replays->recording()) {
+          events.raise(ev::replayRecordStart{}, events.now());
+        }
         scene.transform(player).position = e.position;
         scene.getRigidBody(player)->velocity = {0.f, 0.f};
         playerState = PlayerState::idle;
@@ -675,6 +706,20 @@ template <class Link> int play(Link &link) {
 
     engine::advanceAnimations(scene, ctx.dt);
 
+    // The live Scene keeps simulating under the death cam: remote players,
+    // platforms and the network all carry on.
+    replays->update(scene, ctx.tick);
+    cameraHistory.emplace_back(ctx.tick, camera.offset.x);
+    if (cameraHistory.size() > cameraHistoryLength) {
+      cameraHistory.pop_front();
+    }
+    if (replays->playing()) {
+      const std::int64_t shown = replays->recorder().playbackTick();
+      const auto at = std::ranges::lower_bound(
+          cameraHistory, shown, {}, &std::pair<std::int64_t, float>::first);
+      deathCamX = at != cameraHistory.end() ? at->second : camera.offset.x;
+    }
+
     // Once per tick, so the send rate follows this client's own Timeline.
     link.session.replicator().setExtra(playerNetId,
                                        world::encodeStamp(ctx.tick));
@@ -682,6 +727,9 @@ template <class Link> int play(Link &link) {
   };
 
   engine::SimulationThread sim(std::move(scene), gameTime, onTick);
+  replays.emplace(events, sim, world::ticksPerSecond, replayKeyframeTicks,
+                  replayKeyframes);
+  events.raise(ev::replayRecordStart{}, 0);
   sim.start();
   engine::log::info("P{} joined in {} mode. A/D or arrows to move, Space/W/Up "
                     "to jump, P pause, 1/2/3 speed 0.5x/1x/2x, F scaling mode",
@@ -737,19 +785,26 @@ template <class Link> int play(Link &link) {
         {static_cast<float>(windowWidth), static_cast<float>(windowHeight)},
         true);
     if (frame) {
-      const glm::vec2 camera = frame->scene.get<Camera>(cameraEntity)->offset;
+      // A death cam frame is the replay Scene, which has no Camera.
+      const Camera *live = frame->scene.get<Camera>(cameraEntity);
+      const bool replaying = live == nullptr;
+      const glm::vec2 camera =
+          replaying ? glm::vec2{deathCamX.load(), 0.f} : live->offset;
       renderer.setCamera(camera);
       renderer.drawEntities(frame->scene);
       const engine::SimStatus &status = frame->status;
       const std::string hud =
           status.paused ? fmt::format("P{}  |  {}  |  PAUSED", self, Link::mode)
-                        : fmt::format("P{}  |  {}  |  {:.1f}x  |  cam {:.0f}",
-                                      self, Link::mode, status.speed, camera.x);
-      renderer.drawText(hudTextId,
-                        {.val = hud,
-                         .font = hudFont,
-                         .color = status.paused ? hudAlertColor : hudColor},
-                        hudPosition);
+          : replaying
+              ? fmt::format("P{}  |  {}  |  DEATH CAM", self, Link::mode)
+              : fmt::format("P{}  |  {}  |  {:.1f}x  |  cam {:.0f}", self,
+                            Link::mode, status.speed, camera.x);
+      renderer.drawText(
+          hudTextId,
+          {.val = hud,
+           .font = hudFont,
+           .color = status.paused || replaying ? hudAlertColor : hudColor},
+          hudPosition);
     }
     if (!online) {
       renderer.drawText(disconnectedTextId,
