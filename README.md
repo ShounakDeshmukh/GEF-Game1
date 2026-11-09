@@ -32,7 +32,8 @@ every player goes back to the start. Dying (the bee, spikes, or falling into a p
 The course is built to troll first-time runners, and every trap repeats the same way each run, so
 players learn the patterns by dying:
 
-- Ghost blocks look like grass but can't be stood on.
+- Ghost blocks look like grass but can't be stood on: two in the ground over pits, and one in the
+  middle of three floating platforms on the high route.
 - Pitfalls are real grass that drops away 0.3 s after you land on it, and comes back 3 s later.
 - Spikes are hidden until you step on them, then spring up and kill you. They hide again when you
   respawn, so the next run has to remember where they are.
