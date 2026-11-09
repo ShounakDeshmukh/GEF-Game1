@@ -23,6 +23,7 @@
 namespace {
 
 namespace net = engine::networking;
+namespace ev = engine::events;
 namespace SC = engine::SC;
 using world::goalSize;
 using world::playerSize;
@@ -34,6 +35,11 @@ constexpr int windowHeight = 1080;
 constexpr float gravity = 2600.f;
 constexpr float moveSpeed = 380.f;
 constexpr float jumpSpeed = 1020.f;
+// Shift+Jump: about 1.5x the height of a normal jump.
+constexpr float highJumpSpeed = 1250.f;
+
+constexpr std::array jumpKeys{SC::SDL_SCANCODE_SPACE, SC::SDL_SCANCODE_W,
+                              SC::SDL_SCANCODE_UP};
 
 constexpr int joinAttempts = 5;
 
@@ -384,6 +390,46 @@ template <class Link> int play(Link &link) {
   Interpolator interpolator;
   std::vector<engine::EntityId> interpolated; // reused every tick
 
+  ev::eventManager events;
+  ev::inputMapper keys;
+  for (const SC::SDL_Scancode jumpKey : jumpKeys) {
+    keys.addChord({SC::SDL_SCANCODE_LSHIFT, jumpKey});
+  }
+  // Held move keys per direction: A and Left both count as left.
+  int leftHeld = 0;
+  int rightHeld = 0;
+  std::optional<float> jumpRequest; // this tick's jump speed, if any
+
+  // A chorded jump-key press is the high jump below, so skip it here.
+  events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
+    const int change = e.pressed ? 1 : -1;
+    switch (e.key) {
+    case SC::SDL_SCANCODE_A:
+    case SC::SDL_SCANCODE_LEFT:
+      leftHeld += change;
+      break;
+    case SC::SDL_SCANCODE_D:
+    case SC::SDL_SCANCODE_RIGHT:
+      rightHeld += change;
+      break;
+    case SC::SDL_SCANCODE_SPACE:
+    case SC::SDL_SCANCODE_W:
+    case SC::SDL_SCANCODE_UP:
+      if (e.pressed && !e.chorded) {
+        jumpRequest = jumpSpeed;
+      }
+      break;
+    default:
+      break;
+    }
+  });
+  events.subscribe<ev::inputChordEvent>(
+      [&](const ev::inputChordEvent &e, engine::Scene &) {
+        if (e.pressed) {
+          jumpRequest = highJumpSpeed;
+        }
+      });
+
   auto onTick = [&](const engine::TickContext &ctx) {
     engine::Scene &scene = ctx.scene;
     link.pull(scene);
@@ -447,22 +493,16 @@ template <class Link> int play(Link &link) {
       platformLast[i] = now;
     }
 
+    keys.raise(events, ctx.keyboard, ctx.previousKeyboard, ctx.tick);
+    events.run(scene, ctx.tick);
+
     engine::RigidBody &body = *scene.getRigidBody(player);
-    const bool moveLeft = ctx.keyboard.isKeyPressed(SC::SDL_SCANCODE_A) ||
-                          ctx.keyboard.isKeyPressed(SC::SDL_SCANCODE_LEFT);
-    const bool moveRight = ctx.keyboard.isKeyPressed(SC::SDL_SCANCODE_D) ||
-                           ctx.keyboard.isKeyPressed(SC::SDL_SCANCODE_RIGHT);
-    const bool jump = std::ranges::any_of(
-        std::array{SC::SDL_SCANCODE_SPACE, SC::SDL_SCANCODE_W,
-                   SC::SDL_SCANCODE_UP},
-        [&ctx](SC::SDL_Scancode key) {
-          return ctx.keyboard.justPressed(key, ctx.previousKeyboard);
-        });
-    body.velocity.x =
-        (moveRight ? moveSpeed : 0.f) - (moveLeft ? moveSpeed : 0.f);
-    if (jump && grounded) {
-      body.velocity.y = -jumpSpeed;
+    body.velocity.x = (rightHeld > 0 ? moveSpeed : 0.f) -
+                      (leftHeld > 0 ? moveSpeed : 0.f);
+    if (jumpRequest && grounded) {
+      body.velocity.y = -*jumpRequest;
     }
+    jumpRequest.reset();
 
     physics.step(scene, ctx.dt);
 
