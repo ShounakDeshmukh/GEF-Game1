@@ -943,6 +943,10 @@ template <class Link> int play(Link &link) {
         events.raise(ev::deathEvent{{}, playerNetId, fellCause}, next);
       }
 
+      // The sheet faces right; standing still keeps the last facing.
+      if (body.velocity.x != 0.f) {
+        scene.getShape(player)->flipX = body.velocity.x < 0.f;
+      }
       const PlayerState desired = stateFor(body.velocity, grounded);
       if (desired != playerState) {
         playerState = desired;
