@@ -18,6 +18,11 @@ struct Pitfall {
   bool dropping = false;
 };
 
+// Rise and sink on a fixed rhythm; deadly only while up.
+struct Spikes {
+  bool up = false;
+};
+
 // Touching one scrolls the camera. side is the view edge it guards.
 struct ScrollBoundary {
   enum class Side { left, right } side;

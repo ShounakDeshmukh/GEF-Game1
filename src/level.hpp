@@ -18,6 +18,7 @@ constexpr char stone = 'S'; // full-height stone block, one entity per run
 constexpr char deathZone = 'X'; // hidden, one entity per run
 constexpr char ghost = 'g';     // looks like grass, has no collider
 constexpr char pitfall = 'f';   // grass that drops away when stood on
+constexpr char spikes = '^';    // rise and sink on a rhythm, one entity per run
 // A run of these is one server-driven moving platform.
 constexpr char horizontalMover = 'H';
 constexpr char verticalMover = 'V';
@@ -40,7 +41,7 @@ constexpr std::array<const char *, rows> map = {
     "........................................................SSSS....", // 12
     "..............HHH.............======....HHH.....................", // 13
     "....###.................###......................===............", // 14
-    "..P....P..........................P..........................F..", // 15
+    "..P....P.......................^^.P.............^^...........F..", // 15
     "#########...###g##...######ff###########....######f####...#g####", // 16
     "#########XXX###X##XXX######XX###########XXXX######X####XXX#X####", // 17
 };
