@@ -43,6 +43,10 @@ constexpr float jumpSpeed = 1020.f;
 // Shift with a move key.
 constexpr float sprintSpeed = 1.6f * moveSpeed;
 
+// The opaque part of every player frame; the rest of the 120px sprite is
+// transparent padding.
+const engine::Collider playerHitbox{.size = {78.f, 91.f}, .offset = {21.f, 29.f}};
+
 // On death, the last moments replay in slow motion before the player respawns:
 // deathCamTicks of game time show deathCamSpeed times as much recording.
 constexpr std::int64_t deathCamTicks = 4 * world::ticksPerSecond;
@@ -220,6 +224,12 @@ void placeBoundaries(engine::Scene &scene, engine::EntityId left,
                                      -boundaryReach};
 }
 
+glm::vec2 hitboxCenter(engine::Scene &scene, engine::EntityId entity) {
+  const engine::Collider &collider = *scene.getCollider(entity);
+  return scene.transform(entity).position + collider.offset +
+         collider.size * 0.5f;
+}
+
 // Pushes player out of other along the shallower overlap axis. True if it
 // landed on top.
 bool resolveCollision(engine::Scene &scene,
@@ -235,9 +245,8 @@ bool resolveCollision(engine::Scene &scene,
   }
   glm::vec2 &position = scene.transform(player).position;
   glm::vec2 &velocity = scene.getRigidBody(player)->velocity;
-  const glm::vec2 playerMid = position + glm::vec2{playerSize * 0.5f};
-  const glm::vec2 otherMid =
-      scene.transform(other).position + scene.getCollider(other)->size * 0.5f;
+  const glm::vec2 playerMid = hitboxCenter(scene, player);
+  const glm::vec2 otherMid = hitboxCenter(scene, other);
   if (overlap.size.x < overlap.size.y) {
     position.x += playerMid.x < otherMid.x ? -overlap.size.x : overlap.size.x;
     velocity.x = 0.f;
@@ -487,7 +496,7 @@ template <class Link> int play(Link &link) {
   scene.addShape(player, {.size = {playerSize, playerSize}});
   scene.addSpriteAnimation(player,
                            animationFor(PlayerState::idle, playerSheet));
-  scene.addCollider(player, {.size = {playerSize, playerSize}});
+  scene.addCollider(player, playerHitbox);
   scene.addRigidBody(player);
   const engine::NetId playerNetId = link.session.replicator().track(player);
 
@@ -951,9 +960,10 @@ template <class Link> int play(Link &link) {
           if (!physics.isCollision(scene, player, boundary)) {
             return;
           }
+          const float left = position.x + playerHitbox.offset.x;
           cameraX = edge.side == ScrollBoundary::Side::right
-                        ? position.x + playerSize - (viewWidth - scrollMargin)
-                        : position.x - scrollMargin;
+                        ? left + playerHitbox.size.x - (viewWidth - scrollMargin)
+                        : left - scrollMargin;
         });
     cameraX = std::clamp(cameraX, 0.f, levelWidth - viewWidth);
     if (cameraX != camera.offset.x) {
