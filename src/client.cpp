@@ -523,6 +523,7 @@ template <class Link> int play(Link &link) {
   // it starts.
   PlayerState playerState = PlayerState::idle;
   bool alive = true;
+  bool deathCamPlaying = false;
   bool grounded = false;
   bool touchingGoal = false;
   std::optional<std::size_t> riding; // index into platforms
@@ -748,8 +749,6 @@ template <class Link> int play(Link &link) {
         *scene.getSpriteAnimation(player) =
             engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
         events.raise(deathCamStart{}, events.now() + deathPauseTicks);
-        events.raise(deathCamOver{},
-                     events.now() + deathPauseTicks + deathCamTicks);
       },
       /*fromNetwork=*/true);
   // A round reset may have respawned the player during the pause.
@@ -759,6 +758,7 @@ template <class Link> int play(Link &link) {
           events.raise(
               ev::replayPlayStart{{}, events.now() - deathCamFootageTicks},
               events.now());
+          deathCamPlaying = true;
         }
       });
   // A round reset may have respawned the player during the death cam.
@@ -980,6 +980,12 @@ template <class Link> int play(Link &link) {
     // The live Scene keeps simulating under the death cam: remote players,
     // platforms and the network all carry on.
     replays->update(scene, ctx.tick);
+    // The death cam ends with its replay: early if the player died soon after
+    // respawning, when there's less than a full replay recorded.
+    if (deathCamPlaying && !replays->playing()) {
+      deathCamPlaying = false;
+      events.raise(deathCamOver{}, ctx.tick + 1);
+    }
     cameraHistory.emplace_back(ctx.tick, camera.offset.x);
     if (cameraHistory.size() > cameraHistoryLength) {
       cameraHistory.pop_front();
