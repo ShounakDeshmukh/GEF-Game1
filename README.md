@@ -26,8 +26,8 @@ after 4 s.
 ## The race
 
 The first player to touch the flag wins the round. Two seconds later every player goes back to the
-start. Dying (the bee, or falling into a pit) shows a 4-second death cam replay of the moments before
-it, then respawns the player at the last spawn point passed.
+start. Dying (the bee, spikes, or falling into a pit) replays the last 2 s in slow motion under a
+`REPLAY` banner, then respawns the player at the last spawn point passed.
 
 The course is built to troll first-time runners, and every trap repeats the same way each run, so
 players learn the patterns by dying:

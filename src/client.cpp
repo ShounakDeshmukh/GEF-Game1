@@ -42,8 +42,12 @@ constexpr float jumpSpeed = 1020.f;
 // Shift+Jump: about 1.5x the height of a normal jump.
 constexpr float highJumpSpeed = 1250.f;
 
-// On death, the last few seconds replay before the player respawns.
+// On death, the last moments replay in slow motion before the player respawns:
+// deathCamTicks of game time show deathCamSpeed times as much recording.
 constexpr std::int64_t deathCamTicks = 4 * world::ticksPerSecond;
+constexpr float deathCamSpeed = 0.5f;
+constexpr std::int64_t deathCamFootageTicks =
+    static_cast<std::int64_t>(deathCamTicks * deathCamSpeed);
 // The replay buffer is trimmed a keyframe at a time, so it keeps between 5 and
 // 6 s: always enough for the death cam.
 constexpr std::int64_t replayKeyframeTicks = world::ticksPerSecond;
@@ -85,12 +89,19 @@ constexpr std::array<const char *, 4> playerSheetFiles{
 constexpr engine::EntityId hudTextId =
     std::numeric_limits<engine::EntityId>::max();
 constexpr engine::EntityId disconnectedTextId = hudTextId - 1;
-constexpr engine::EntityId firstFeedTextId = disconnectedTextId - 1;
+constexpr engine::EntityId replayBannerTextId = disconnectedTextId - 1;
+constexpr engine::EntityId firstFeedTextId = replayBannerTextId - 1;
 constexpr std::size_t feedLength = 4;
 // A feed line disappears this long after it was added.
 constexpr std::int64_t feedLineTicks = 4 * world::ticksPerSecond;
 constexpr glm::vec2 hudPosition{24.f, 24.f};
 constexpr float hudFontSize = 40.f;
+// "REPLAY" across the middle of the view. Its size was measured offline for
+// SuperBouncer at this font size, since the renderer can't measure text.
+constexpr float bannerFontSize = 160.f;
+constexpr glm::vec2 replayBannerSize{487.f, 179.f};
+constexpr glm::vec2 replayBannerPosition{(windowWidth - replayBannerSize.x) / 2.f,
+                                         (windowHeight - replayBannerSize.y) / 2.f};
 constexpr glm::vec2 disconnectedPosition{hudPosition.x,
                                          hudPosition.y + 1.5f * hudFontSize};
 constexpr engine::Color hudColor{20, 30, 60, 255};
@@ -272,6 +283,8 @@ template <class Link> int play(Link &link) {
       engine::SpriteSheetLayout::grid({goalSize, goalSize}, 2));
   const engine::FontId hudFont =
       renderer.loadFont(assetDir + "fonts/SuperBouncer.ttf", hudFontSize);
+  const engine::FontId bannerFont =
+      renderer.loadFont(assetDir + "fonts/SuperBouncer.ttf", bannerFontSize);
 
   engine::Scene scene;
 
@@ -624,7 +637,7 @@ template <class Link> int play(Link &link) {
         scene.getRigidBody(player)->velocity = {0.f, 0.f};
         *scene.getSpriteAnimation(player) =
             engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
-        events.raise(ev::replayPlayStart{{}, events.now() - deathCamTicks},
+        events.raise(ev::replayPlayStart{{}, events.now() - deathCamFootageTicks},
                      events.now());
         events.raise(deathCamOver{}, events.now() + deathCamTicks);
       },
@@ -835,6 +848,7 @@ template <class Link> int play(Link &link) {
   replays.emplace(events, sim, world::ticksPerSecond, replayKeyframeTicks,
                   replayKeyframes);
   events.raise(ev::replayRecordStart{}, 0);
+  events.raise(ev::replaySpeed{{}, deathCamSpeed}, 0);
   sim.start();
   engine::log::info("P{} joined in {} mode. A/D or arrows to move, Space/W/Up "
                     "to jump, P pause, 1/2/3 speed 0.5x/1x/2x, F scaling mode",
@@ -910,6 +924,13 @@ template <class Link> int play(Link &link) {
            .font = hudFont,
            .color = status.paused || replaying ? hudAlertColor : hudColor},
           hudPosition);
+      if (replaying) {
+        renderer.drawText(replayBannerTextId,
+                          {.val = "REPLAY",
+                           .font = bannerFont,
+                           .color = hudAlertColor},
+                          replayBannerPosition);
+      }
     }
     if (!online) {
       renderer.drawText(disconnectedTextId,
