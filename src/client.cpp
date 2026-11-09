@@ -87,6 +87,8 @@ constexpr engine::EntityId hudTextId =
 constexpr engine::EntityId disconnectedTextId = hudTextId - 1;
 constexpr engine::EntityId firstFeedTextId = disconnectedTextId - 1;
 constexpr std::size_t feedLength = 4;
+// A feed line disappears this long after it was added.
+constexpr std::int64_t feedLineTicks = 4 * world::ticksPerSecond;
 constexpr glm::vec2 hudPosition{24.f, 24.f};
 constexpr float hudFontSize = 40.f;
 constexpr glm::vec2 disconnectedPosition{hudPosition.x,
@@ -460,7 +462,11 @@ template <class Link> int play(Link &link) {
     int deaths = 0;
   };
   std::map<engine::ClientId, Score> scores;
-  std::deque<std::string> feed;
+  struct FeedLine {
+    std::int64_t expiresAt;
+    std::string text;
+  };
+  std::deque<FeedLine> feed;
   // sim -> main: the scoreboard then the feed, newest last.
   engine::threading::LatestValue<std::vector<std::string>> hudSlot;
 
@@ -471,6 +477,7 @@ template <class Link> int play(Link &link) {
   std::deque<std::pair<std::int64_t, float>> cameraHistory;
   std::atomic<float> deathCamX{0.f}; // sim -> main
   struct deathCamOver : ev::simpleEvent {};
+  struct feedLineExpired : ev::simpleEvent {};
   struct pitfallDrop : ev::simpleEvent {
     engine::EntityId tile = 0;
   };
@@ -550,20 +557,34 @@ template <class Link> int play(Link &link) {
         scene.addCollider(e.tile, {.size = {tileSize, tileSize}});
         scene.get<Pitfall>(e.tile)->dropping = false;
       });
-  const auto addFeedLine = [&](std::string line) {
-    feed.push_back(std::move(line));
-    if (feed.size() > feedLength) {
-      feed.pop_front();
-    }
+  const auto publishHud = [&] {
     std::vector<std::string> lines;
     lines.reserve(feed.size() + scores.size());
     for (const auto &[id, score] : scores) {
       lines.push_back(fmt::format("P{}   {} wins   {} deaths", id, score.wins,
                                   score.deaths));
     }
-    lines.insert(lines.end(), feed.begin(), feed.end());
+    for (const FeedLine &line : feed) {
+      lines.push_back(line.text);
+    }
     hudSlot.publish(std::move(lines));
   };
+  const auto addFeedLine = [&](std::string text) {
+    const std::int64_t expiresAt = events.now() + feedLineTicks;
+    feed.push_back({expiresAt, std::move(text)});
+    if (feed.size() > feedLength) {
+      feed.pop_front();
+    }
+    publishHud();
+    events.raise(feedLineExpired{}, expiresAt);
+  };
+  events.subscribe<feedLineExpired>(
+      [&](const feedLineExpired &, engine::Scene &) {
+        std::erase_if(feed, [&](const FeedLine &line) {
+          return line.expiresAt <= events.now();
+        });
+        publishHud();
+      });
   const auto recordDeath = [&](engine::ClientId victim, std::uint32_t cause) {
     ++scores[victim].deaths;
     addFeedLine(fmt::format("P{} {}", victim,

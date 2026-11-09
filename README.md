@@ -20,7 +20,8 @@ They can join at any time.
 The server logs joins and leaves, and each client's updates/s once a second.
 Each window's top-left corner shows its player id, mode, speed or `PAUSED`, and the camera's x,
 plus `DISCONNECTED FROM SERVER` if the server stops replying. Below it are the scoreboard (wins
-and deaths per player) and a feed of the latest deaths and race wins.
+and deaths per player) and a feed of the latest deaths and race wins; each feed line disappears
+after 4 s.
 
 ## The race
 
