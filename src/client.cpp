@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -67,8 +68,14 @@ constexpr std::int64_t pitfallReturnTicks = 3 * world::ticksPerSecond;
 
 // The cropped spike sprite's height; spikes sit on the floor of their cell.
 constexpr float spikeHeight = 34.f;
-// deathEvent::cause for spikes: not a NetId any entity can have.
+// deathEvent::cause for spikes and saws: not NetIds any entity can have.
 constexpr std::uint32_t spikesCause = engine::kNetIdLocalMask;
+constexpr std::uint32_t sawCause = engine::kNetIdLocalMask - 1;
+
+// A saw crosses its trigger fast, waits, then rolls home slowly enough to jump.
+constexpr float sawRushSpeed = 700.f;
+constexpr float sawReturnSpeed = 150.f;
+constexpr std::int64_t sawHoldTicks = world::ticksPerSecond;
 
 constexpr std::array moveKeys{SC::SDL_SCANCODE_A, SC::SDL_SCANCODE_D,
                               SC::SDL_SCANCODE_LEFT, SC::SDL_SCANCODE_RIGHT};
@@ -286,6 +293,9 @@ template <class Link> int play(Link &link) {
   const engine::SpriteSheetId beeSheet = renderer.createSpriteSheet(
       renderer.loadTexture(assetDir + "png/sheet_bee.png"),
       engine::SpriteSheetLayout::grid({world::beeSize, world::beeSize}, 2));
+  const engine::SpriteSheetId sawSheet = renderer.createSpriteSheet(
+      renderer.loadTexture(assetDir + "png/sheet_saw.png"),
+      engine::SpriteSheetLayout::grid({64.f, 64.f}, 2));
   const engine::SpriteSheetId goalSheet = renderer.createSpriteSheet(
       renderer.loadTexture(assetDir + "png/sheet_flag.png"),
       engine::SpriteSheetLayout::grid({goalSize, goalSize}, 2));
@@ -305,6 +315,7 @@ template <class Link> int play(Link &link) {
   const engine::Shape grassShape{.size = {tileSize, tileSize},
                                  .texture = terrainTexture};
   std::vector<engine::EntityId> terrain;
+  std::vector<engine::EntityId> sawTriggers; // linked to saws after the scan
   engine::EntityId goal = 0;
   for (int row = 0; row < static_cast<int>(map.size()); ++row) {
     const std::string &line = map[static_cast<std::size_t>(row)];
@@ -368,6 +379,29 @@ template <class Link> int play(Link &link) {
         scene.add<Spikes>(trap);
         break;
       }
+      case level::saw: {
+        const engine::EntityId trap = scene.createEntity();
+        const glm::vec2 home = world::cellPosition(column, row);
+        scene.transform(trap).position = home;
+        scene.addShape(trap, {.size = {tileSize, tileSize}});
+        scene.addSpriteAnimation(
+            trap, engine::SpriteAnimation::uniform(sawSheet, {0, 1}, 0.05f));
+        scene.addCollider(trap, {.size = {tileSize, tileSize}});
+        scene.add<Saw>(trap, {.homeX = home.x});
+        break;
+      }
+      case level::sawTrigger: {
+        const int run = world::runAt(line, column);
+        if (run == 0) {
+          break;
+        }
+        const engine::EntityId trigger = scene.createEntity();
+        scene.transform(trigger).position = world::cellPosition(column, row);
+        scene.addCollider(
+            trigger, {.size = {static_cast<float>(run) * tileSize, tileSize}});
+        sawTriggers.push_back(trigger);
+        break;
+      }
       case level::playerSpawn: {
         // Bottom-align the taller player sprite to the cell it is standing in.
         const engine::EntityId spawn = scene.createEntity();
@@ -389,6 +423,28 @@ template <class Link> int play(Link &link) {
         break;
       }
     }
+  }
+
+  for (const engine::EntityId trigger : sawTriggers) {
+    const glm::vec2 at = scene.transform(trigger).position;
+    const float width = scene.getCollider(trigger)->size.x;
+    std::optional<engine::EntityId> nearest;
+    float nearestDistance = std::numeric_limits<float>::max();
+    scene.each<Saw>([&](engine::EntityId trap, const Saw &) {
+      const glm::vec2 home = scene.transform(trap).position;
+      const float distance = std::abs(home.x - (at.x + width / 2.f));
+      if (home.y == at.y && distance < nearestDistance) {
+        nearest = trap;
+        nearestDistance = distance;
+      }
+    });
+    if (!nearest) {
+      engine::log::error("a saw trigger has no saw in its row");
+      return 1;
+    }
+    const bool sawOnRight = scene.get<Saw>(*nearest)->homeX > at.x;
+    scene.add<SawTrigger>(
+        trigger, {*nearest, sawOnRight ? at.x : at.x + width - tileSize});
   }
 
   // Spawn points never move, so the sim thread can take a copy.
@@ -502,6 +558,9 @@ template <class Link> int play(Link &link) {
   std::deque<std::pair<std::int64_t, float>> cameraHistory;
   std::atomic<float> deathCamX{0.f}; // sim -> main
   struct deathCamStart : ev::simpleEvent {};
+  struct sawReturn : ev::simpleEvent {
+    engine::EntityId saw = 0;
+  };
   // Seconds until the round restarts; 0 clears the countdown.
   struct restartCountdown : ev::simpleEvent {
     int seconds = 0;
@@ -543,10 +602,19 @@ template <class Link> int play(Link &link) {
         sprintChords += e.pressed ? 1 : -1;
       });
 
-  // Only the local player's contacts with the bee, death zones, spikes, the
-  // flag and pitfalls it lands on are raised; terrain push-out stays in onTick.
+  // Only the local player's contacts with the bee, death zones, spikes, saws,
+  // saw triggers, the flag and pitfalls it lands on are raised; terrain
+  // push-out stays in onTick.
   events.subscribe<ev::collisionEvent>(
       [&](const ev::collisionEvent &e, engine::Scene &scene) {
+        if (const SawTrigger *trigger = scene.get<SawTrigger>(e.b)) {
+          Saw &saw = *scene.get<Saw>(trigger->saw);
+          if (saw.state == Saw::State::resting) {
+            saw.state = Saw::State::rushing;
+            saw.targetX = trigger->targetX;
+          }
+          return;
+        }
         if (Pitfall *pit = scene.get<Pitfall>(e.b)) {
           if (!pit->dropping) {
             pit->dropping = true;
@@ -568,6 +636,7 @@ template <class Link> int play(Link &link) {
         // Death events carry NetIds, which every process agrees on.
         const std::uint32_t cause = e.b == bee ? beeNetId
                                     : scene.has<Spikes>(e.b) ? spikesCause
+                                    : scene.has<Saw>(e.b)    ? sawCause
                                                              : fellCause;
         events.raise(ev::deathEvent{{}, playerNetId, cause}, events.now());
       });
@@ -597,6 +666,12 @@ template <class Link> int play(Link &link) {
     }
     hudSlot.publish(std::move(lines));
   };
+  events.subscribe<sawReturn>([&](const sawReturn &e, engine::Scene &scene) {
+    // A respawn may have sent the saw home already.
+    if (Saw &saw = *scene.get<Saw>(e.saw); saw.state == Saw::State::holding) {
+      saw.state = Saw::State::returning;
+    }
+  });
   const auto addFeedLine = [&](std::string text) {
     const std::int64_t expiresAt = events.now() + feedLineTicks;
     feed.push_back({expiresAt, std::move(text)});
@@ -618,6 +693,7 @@ template <class Link> int play(Link &link) {
     addFeedLine(fmt::format("P{} {}", victim,
                             cause == beeNetId     ? "was stung by the bee"
                             : cause == spikesCause ? "got spiked"
+                            : cause == sawCause    ? "got sawed"
                                                    : "fell into a pit"));
   };
   // Every player, winner included, goes back to the start once the win has
@@ -701,6 +777,10 @@ template <class Link> int play(Link &link) {
         alive = true;
         grounded = false;
         riding.reset();
+        scene.each<Saw>([&scene](engine::EntityId trap, Saw &saw) {
+          scene.transform(trap).position.x = saw.homeX;
+          saw.state = Saw::State::resting;
+        });
         // Sprung spikes hide again, so the next run has to remember them.
         scene.each<Spikes>([&scene](engine::EntityId trap, Spikes &spikes) {
           spikes.up = false;
@@ -775,6 +855,27 @@ template <class Link> int play(Link &link) {
     keys.raise(events, ctx.keyboard, ctx.previousKeyboard, ctx.tick);
     events.run(scene, ctx.tick);
 
+    // Saws keep moving while the player is dead.
+    scene.each<Saw>([&](engine::EntityId trap, Saw &saw) {
+      const bool rushing = saw.state == Saw::State::rushing;
+      if (!rushing && saw.state != Saw::State::returning) {
+        return;
+      }
+      float &x = scene.transform(trap).position.x;
+      const float goal = rushing ? saw.targetX : saw.homeX;
+      const float step = (rushing ? sawRushSpeed : sawReturnSpeed) * ctx.dt;
+      x = std::abs(goal - x) <= step ? goal : x + std::copysign(step, goal - x);
+      if (x != goal) {
+        return;
+      }
+      if (rushing) {
+        saw.state = Saw::State::holding;
+        events.raise(sawReturn{{}, trap}, ctx.tick + sawHoldTicks);
+      } else {
+        saw.state = Saw::State::resting;
+      }
+    });
+
     // A dead player stays frozen where it died until its spawnEvent.
     if (alive) {
       engine::RigidBody &body = *scene.getRigidBody(player);
@@ -819,6 +920,9 @@ template <class Link> int play(Link &link) {
           [&](engine::EntityId zone, DeathZone &) { touch(zone); });
       scene.each<Spikes>(
           [&](engine::EntityId trap, const Spikes &) { touch(trap); });
+      scene.each<Saw>([&](engine::EntityId trap, const Saw &) { touch(trap); });
+      scene.each<SawTrigger>(
+          [&](engine::EntityId trigger, const SawTrigger &) { touch(trigger); });
       // Only on first contact, so standing on the flag doesn't repeat it.
       const bool onGoal = physics.isCollision(scene, player, goal);
       if (onGoal && !touchingGoal) {

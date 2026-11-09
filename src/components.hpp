@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/ids.hpp>
 #include <glm/vec2.hpp>
 
 // Game-defined components. The engine stores them through add<T>/get<T>/each<T>
@@ -22,6 +23,22 @@ struct Pitfall {
 // respawns.
 struct Spikes {
   bool up = false;
+};
+
+// Always visible and deadly. Rests at home until a player enters its trigger,
+// rushes across the trigger, holds, then rolls back home.
+struct Saw {
+  enum class State { resting, rushing, holding, returning };
+  float homeX = 0.f;
+  float targetX = 0.f;
+  State state = State::resting;
+};
+
+// Hidden zone near a saw; entering it sends the saw to targetX, the zone's far
+// edge, so the player has to back away.
+struct SawTrigger {
+  engine::EntityId saw = 0;
+  float targetX = 0.f;
 };
 
 // Touching one scrolls the camera. side is the view edge it guards.

@@ -16,6 +16,8 @@ constexpr char deathZone = 'X'; // hidden, one entity per run
 constexpr char ghost = 'g';     // looks like grass, has no collider
 constexpr char pitfall = 'f';   // grass that drops away when stood on
 constexpr char spikes = '^';    // hidden until stepped on, one entity per cell
+constexpr char saw = 's';       // visible, rushes at players in its trigger
+constexpr char sawTrigger = 't'; // hidden, works the nearest saw in its row
 // A run of these is one server-driven moving platform.
 constexpr char horizontalMover = 'H';
 constexpr char verticalMover = 'V';

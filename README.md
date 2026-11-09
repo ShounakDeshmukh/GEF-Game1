@@ -36,6 +36,9 @@ players learn the patterns by dying:
 - Pitfalls are real grass that drops away 0.3 s after you land on it, and comes back 3 s later.
 - Spikes are hidden until you step on them, then spring up and kill you. They hide again when you
   respawn, so the next run has to remember where they are.
+- Saws are always visible. Step into the hidden zone in front of one and it rushes across the zone
+  at you, waits a second, then rolls home slowly enough to jump over. One guards the ground route
+  past the third spawn point, one the high route along the wooden ledge.
 - The bee dashes along its path at 3x speed for 1 s out of every 5 (driven by the server).
 
 ## Controls
@@ -64,6 +67,8 @@ the hidden scroll boundaries near the edges of the view.
 | Ghost block | `g` | Transform, Shape (texture) | yes |
 | Pitfall | `f` | Transform, Shape (texture), Collider, `Pitfall` | until it drops |
 | Spikes | `^` | Transform, Collider, `Spikes`; Shape once sprung | once sprung |
+| Saw | `s` | Transform, Shape, Collider, SpriteAnimation, `Saw` | yes |
+| Saw trigger | `t` | Transform, Collider, `SawTrigger` (works the nearest saw in its row) | no |
 | Scroll boundary | none, 2 per client | Transform, Collider, `ScrollBoundary` | no |
 | Camera | none, 1 per client | Transform, `Camera` | no |
 
@@ -79,7 +84,8 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 | Event | Raised by | Handled by | Network |
 |---|---|---|---|
 | `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, sprint | local |
-| `collisionEvent` | client, for its player against the bee, death zones, spikes, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a `goalReached` claim, or a `pitfallDrop` | local |
+| `collisionEvent` | client, for its player against the bee, death zones, spikes, saws, saw triggers, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a saw rush, a `goalReached` claim, or a `pitfallDrop` | local |
+| `sawReturn` | client, a second after a saw finishes its rush | client: sends the saw rolling home | local |
 | `pitfallDrop`, `pitfallReturn` | client, after landing on a pitfall | client: hides the tile, then restores it | local |
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
 | `spawnEvent` | client, after the death cam or a round reset | client: places the player, hides sprung spikes, resumes recording | local |
