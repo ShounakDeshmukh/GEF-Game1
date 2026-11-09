@@ -19,12 +19,20 @@ They can join at any time.
 `port` defaults to `5555` and `host:port` to `localhost:5555`, e.g. `--client 192.168.1.20:5555`.
 The server logs joins and leaves, and each client's updates/s once a second.
 Each window's top-left corner shows its player id, mode, speed or `PAUSED`, and the camera's x,
-plus `DISCONNECTED FROM SERVER` if the server stops replying.
+plus `DISCONNECTED FROM SERVER` if the server stops replying. Below it are the scoreboard (wins
+and deaths per player) and a feed of the latest deaths and race wins.
+
+## The race
+
+The first player to touch the flag wins the round. Two seconds later every player goes back to the
+start. Dying (the bee, or falling into a pit) shows a 4-second death cam replay of the moments before
+it, then respawns the player at the last spawn point passed.
 
 ## Controls
 
 - Move: `A`/`D` or the left/right arrow keys
 - Jump: `Space`, `W`, or the up arrow key
+- High jump (chord): hold left `Shift`, then jump
 - Pause / unpause: `P`
 - Speed 0.5x / 1x / 2x: `1` / `2` / `3`
 - Toggle scaling mode: `F`
@@ -32,8 +40,7 @@ plus `DISCONNECTED FROM SERVER` if the server stops replying.
 ## Level objects
 
 The level is two screens wide (`src/level.hpp`). The camera scrolls when the player touches one of
-the hidden scroll boundaries near the edges of the view. Falling into a pit respawns the player at
-the last spawn point passed.
+the hidden scroll boundaries near the edges of the view.
 
 | Object | Map char | Components | Visible |
 |---|---|---|---|
@@ -51,3 +58,22 @@ Hidden objects are entities with no Shape, so the renderer never draws them. `Sp
 `DeathZone`, `ScrollBoundary` and `Camera` are game-defined components in `src/components.hpp`;
 the engine stores them without knowing their types. None of them are replicated: every client
 builds the same level locally and scrolls its own view.
+
+## Events
+
+Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
+
+| Event | Raised by | Handled by | Network |
+|---|---|---|---|
+| `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, high jump | local |
+| `collisionEvent` | client, for its player against the bee, death zones and the flag | client: death, or a `goalReached` claim | local |
+| `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
+| `spawnEvent` | client, after the death cam or a round reset | client: places the player, resumes recording | local |
+| `goalReached` | client collision handler | server: the first claim of a round wins | client -> server |
+| `roundWon` | server | client: scoreboard, reset to the start | server -> all clients |
+| `replayRecordStart`, `replayPlayStart`, `replayPlayStop` | client death and spawn handlers | engine `replayController` | local |
+
+The server accepts a `deathEvent` only for the sender's own player, and takes the `goalReached`
+claimant from the session rather than the payload, so a client can't kill or crown another player.
+Pause, speed and scaling keys stay on the main thread: a paused sim doesn't tick, so it couldn't
+handle the event that unpauses it.
