@@ -2,6 +2,7 @@
 #include "interpolation.hpp"
 #include "level.hpp"
 #include "modes.hpp"
+#include "raceEvents.hpp"
 #include "world.hpp"
 
 #include <engine/engine.hpp>
@@ -410,9 +411,13 @@ template <class Link> int play(Link &link) {
   int leftHeld = 0;
   int rightHeld = 0;
   std::optional<float> jumpRequest; // this tick's jump speed, if any
-  std::map<engine::ClientId, int> deaths;
+  struct Score {
+    int wins = 0;
+    int deaths = 0;
+  };
+  std::map<engine::ClientId, Score> scores;
   std::deque<std::string> feed;
-  // sim -> main: the death tally then the kill feed, newest last.
+  // sim -> main: the scoreboard then the feed, newest last.
   engine::threading::LatestValue<std::vector<std::string>> hudSlot;
 
   // A chorded jump-key press is the high jump below, so skip it here.
@@ -449,10 +454,10 @@ template <class Link> int play(Link &link) {
   // raised; terrain push-out stays in onTick.
   events.subscribe<ev::collisionEvent>(
       [&](const ev::collisionEvent &e, engine::Scene &) {
+        // The server decides who won, so touching the flag is only a claim.
         if (e.b == goal) {
-          engine::log::info("flag reached, level complete, now play again :)");
-          events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
-                       events.now());
+          link.session.send(race::goalReached::kType,
+                            race::goalReached{}.encode(), events.now());
           return;
         }
         // Death events carry NetIds, which every process agrees on.
@@ -460,24 +465,37 @@ template <class Link> int play(Link &link) {
             ev::deathEvent{{}, playerNetId, e.b == bee ? beeNetId : fellCause},
             events.now());
       });
-  const auto recordDeath = [&](engine::ClientId victim, std::uint32_t cause) {
-    ++deaths[victim];
-    feed.push_back(fmt::format("P{} {}", victim,
-                               cause == beeNetId ? "was stung by the bee"
-                                                 : "fell into a pit"));
+  const auto addFeedLine = [&](std::string line) {
+    feed.push_back(std::move(line));
     if (feed.size() > feedLength) {
       feed.pop_front();
     }
     std::vector<std::string> lines;
-    lines.reserve(feed.size() + 1);
-    std::string tally = "deaths";
-    for (const auto &[id, count] : deaths) {
-      tally += fmt::format("   P{}: {}", id, count);
+    lines.reserve(feed.size() + scores.size());
+    for (const auto &[id, score] : scores) {
+      lines.push_back(fmt::format("P{}   {} wins   {} deaths", id, score.wins,
+                                  score.deaths));
     }
-    lines.push_back(std::move(tally));
     lines.insert(lines.end(), feed.begin(), feed.end());
     hudSlot.publish(std::move(lines));
   };
+  const auto recordDeath = [&](engine::ClientId victim, std::uint32_t cause) {
+    ++scores[victim].deaths;
+    addFeedLine(fmt::format("P{} {}", victim,
+                            cause == beeNetId ? "was stung by the bee"
+                                              : "fell into a pit"));
+  };
+  // Every player, winner included, goes back to the start once the win has
+  // been shown for a moment.
+  events.subscribe<race::roundWon>(
+      [&](const race::roundWon &e, engine::Scene &) {
+        ++scores[e.winner].wins;
+        addFeedLine(e.winner == self ? "you won the race!"
+                                     : fmt::format("P{} won the race!", e.winner));
+        events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
+                     events.now() + race::resetDelayTicks);
+      },
+      /*fromNetwork=*/true);
   // Local deaths are raised by the collision handler and sent to the server;
   // remote ones are the server relaying other players' deaths.
   events.subscribe<ev::deathEvent>(

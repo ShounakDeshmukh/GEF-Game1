@@ -1,4 +1,5 @@
 #include "modes.hpp"
+#include "raceEvents.hpp"
 #include "world.hpp"
 
 #include <engine/engine.hpp>
@@ -95,6 +96,25 @@ int runServer(int port) {
         server.broadcast(ev::deathEvent::kType, e.encode(), events.now());
       },
       /*fromNetwork=*/true);
+
+  // The first goalReached of a round wins it; later ones are ignored until the
+  // round reopens, after every client has reset.
+  struct roundOpened : ev::simpleEvent {};
+  bool roundOpen = true;
+  events.subscribe<race::goalReached>(
+      [&](const race::goalReached &e, engine::Scene &) {
+        if (!roundOpen) {
+          return;
+        }
+        roundOpen = false;
+        engine::log::info("P{} won the round", e.from);
+        server.broadcast(race::roundWon::kType,
+                         race::roundWon{{}, e.from}.encode(), events.now());
+        events.raise(roundOpened{}, events.now() + race::resetDelayTicks);
+      },
+      /*fromNetwork=*/true);
+  events.subscribe<roundOpened>(
+      [&](const roundOpened &, engine::Scene &) { roundOpen = true; });
 
   // sim thread: owns the Scene and every replicator call.
   engine::SimulationThread sim(
