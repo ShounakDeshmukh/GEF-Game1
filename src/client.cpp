@@ -1003,8 +1003,9 @@ template <class Link> int play(Link &link) {
   events.raise(ev::replayRecordStart{}, 0);
   events.raise(ev::replaySpeed{{}, deathCamSpeed}, 0);
   sim.start();
-  engine::log::info("P{} joined in {} mode. A/D or arrows to move, Space/W/Up "
-                    "to jump, P pause, 1/2/3 speed 0.5x/1x/2x, F scaling mode",
+  engine::log::info("P{} joined in {} mode. A/D or arrows to move, Shift to "
+                    "sprint, Space/W/Up to jump, P pause, 1/2/3 speed "
+                    "0.5x/1x/2x, F scaling mode",
                     self, Link::mode);
 
   // main thread: input capture, time control requests and rendering.
