@@ -17,6 +17,7 @@
 namespace {
 
 namespace net = engine::networking;
+namespace ev = engine::events;
 
 std::atomic<bool> stopRequested{false};
 
@@ -80,9 +81,26 @@ int runServer(int port) {
   };
   engine::threading::LatestValue<WorldUpdate> worldSlot;
 
+  // Clients report their own player's deaths; the server relays them to
+  // everyone, so each window's kill feed agrees.
+  ev::eventManager events;
+  events.subscribe<ev::deathEvent>(
+      [&](const ev::deathEvent &e, engine::Scene &) {
+        // from is set by the session, so a client can't forge another's death.
+        if (engine::ownerOf(e.entity) != e.from) {
+          engine::log::warn("P{} reported a death for P{}; dropped", e.from,
+                            engine::ownerOf(e.entity));
+          return;
+        }
+        server.broadcast(ev::deathEvent::kType, e.encode(), events.now());
+      },
+      /*fromNetwork=*/true);
+
   // sim thread: owns the Scene and every replicator call.
   engine::SimulationThread sim(
       std::move(scene), gameTime, [&](const engine::TickContext &ctx) {
+        events.receive(server.drainMessages(), ctx.tick);
+        events.run(ctx.scene, ctx.tick);
         server.applyClientStates(ctx.scene);
         if (const auto update = worldSlot.take()) {
           for (std::size_t i = 0; i < objects.size(); ++i) {

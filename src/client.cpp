@@ -11,8 +11,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -64,6 +66,8 @@ constexpr std::array<const char *, 4> playerSheetFiles{
 constexpr engine::EntityId hudTextId =
     std::numeric_limits<engine::EntityId>::max();
 constexpr engine::EntityId disconnectedTextId = hudTextId - 1;
+constexpr engine::EntityId firstFeedTextId = disconnectedTextId - 1;
+constexpr std::size_t feedLength = 4;
 constexpr glm::vec2 hudPosition{24.f, 24.f};
 constexpr float hudFontSize = 40.f;
 constexpr glm::vec2 disconnectedPosition{hudPosition.x,
@@ -406,6 +410,10 @@ template <class Link> int play(Link &link) {
   int leftHeld = 0;
   int rightHeld = 0;
   std::optional<float> jumpRequest; // this tick's jump speed, if any
+  std::map<engine::ClientId, int> deaths;
+  std::deque<std::string> feed;
+  // sim -> main: the death tally then the kill feed, newest last.
+  engine::threading::LatestValue<std::vector<std::string>> hudSlot;
 
   // A chorded jump-key press is the high jump below, so skip it here.
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
@@ -452,23 +460,50 @@ template <class Link> int play(Link &link) {
             ev::deathEvent{{}, playerNetId, e.b == bee ? beeNetId : fellCause},
             events.now());
       });
+  const auto recordDeath = [&](engine::ClientId victim, std::uint32_t cause) {
+    ++deaths[victim];
+    feed.push_back(fmt::format("P{} {}", victim,
+                               cause == beeNetId ? "was stung by the bee"
+                                                 : "fell into a pit"));
+    if (feed.size() > feedLength) {
+      feed.pop_front();
+    }
+    std::vector<std::string> lines;
+    lines.reserve(feed.size() + 1);
+    std::string tally = "deaths";
+    for (const auto &[id, count] : deaths) {
+      tally += fmt::format("   P{}: {}", id, count);
+    }
+    lines.push_back(std::move(tally));
+    lines.insert(lines.end(), feed.begin(), feed.end());
+    hudSlot.publish(std::move(lines));
+  };
+  // Local deaths are raised by the collision handler and sent to the server;
+  // remote ones are the server relaying other players' deaths.
   events.subscribe<ev::deathEvent>(
       [&](const ev::deathEvent &e, engine::Scene &scene) {
+        const engine::ClientId victim = engine::ownerOf(e.entity);
+        if (e.remote) {
+          // The relay includes our own deaths, already counted when raised.
+          if (victim != self) {
+            recordDeath(victim, e.cause);
+          }
+          return;
+        }
         if (!alive) {
           return;
         }
         alive = false;
-        engine::log::info("{}, respawning in {} ticks",
-                          e.cause == beeNetId ? "stung by the bee"
-                                              : "fell into a pit",
-                          respawnDelayTicks);
+        recordDeath(self, e.cause);
+        link.session.send(ev::deathEvent::kType, e.encode(), events.now());
         scene.getRigidBody(player)->velocity = {0.f, 0.f};
         *scene.getSpriteAnimation(player) =
             engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
         const glm::vec2 at = respawnFor(spawns, scene.transform(player).position.x);
         events.raise(ev::spawnEvent{{}, playerNetId, self, at},
                      events.now() + respawnDelayTicks);
-      });
+      },
+      /*fromNetwork=*/true);
   events.subscribe<ev::spawnEvent>(
       [&](const ev::spawnEvent &e, engine::Scene &scene) {
         scene.transform(player).position = e.position;
@@ -484,6 +519,7 @@ template <class Link> int play(Link &link) {
   auto onTick = [&](const engine::TickContext &ctx) {
     engine::Scene &scene = ctx.scene;
     link.pull(scene);
+    events.receive(link.session.drainMessages(), ctx.tick);
 
     // Remote players arrive with a RigidBody; animate them from its velocity,
     // then strip it so physics.step never drifts them between snapshots.
@@ -635,6 +671,7 @@ template <class Link> int play(Link &link) {
 
   // main thread: input capture, time control requests and rendering.
   std::optional<engine::RenderFrame> frame;
+  std::vector<std::string> hudLines;
   engine::KeyboardState previous;
   bool online = true;
   while (!window.shouldClose()) {
@@ -658,6 +695,9 @@ template <class Link> int play(Link &link) {
 
     if (auto next = sim.takeRenderFrame()) {
       frame = std::move(next);
+    }
+    if (auto next = hudSlot.take()) {
+      hudLines = std::move(*next);
     }
     if (sim.failure()) {
       engine::log::error("simulation failed; exiting");
@@ -699,6 +739,13 @@ template <class Link> int play(Link &link) {
                          .font = hudFont,
                          .color = hudAlertColor},
                         disconnectedPosition);
+    }
+    for (std::size_t i = 0; i < hudLines.size(); ++i) {
+      renderer.drawText(
+          firstFeedTextId - static_cast<engine::EntityId>(i),
+          {.val = hudLines[i], .font = hudFont, .color = hudColor},
+          {hudPosition.x, disconnectedPosition.y +
+                              static_cast<float>(i + 1) * 1.5f * hudFontSize});
     }
     renderer.present();
   }
