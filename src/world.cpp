@@ -33,13 +33,14 @@ glm::vec2 cellPosition(int column, int row) {
           static_cast<float>(row) * tileSize};
 }
 
-int runAt(const char *line, int column) {
+int runAt(const std::string &line, int column) {
   const char cell = line[column];
   if (column > 0 && line[column - 1] == cell) {
     return 0;
   }
   int length = 1;
-  while (column + length < level::columns && line[column + length] == cell) {
+  while (static_cast<std::size_t>(column + length) < line.size() &&
+         line[column + length] == cell) {
     ++length;
   }
   return length;
@@ -66,12 +67,20 @@ std::optional<std::int64_t> decodeStamp(const engine::networking::Bytes *extra) 
   return std::bit_cast<std::int64_t>(bytes);
 }
 
-std::vector<Motion> motions() {
+float widthOf(const level::Map &map) {
+  return static_cast<float>(map.front().size()) * tileSize;
+}
+
+float heightOf(const level::Map &map) {
+  return static_cast<float>(map.size()) * tileSize;
+}
+
+std::vector<Motion> motions(const level::Map &map) {
   std::vector<Motion> result;
   std::optional<Motion> bee;
-  for (int row = 0; row < level::rows; ++row) {
-    const char *line = level::map[static_cast<std::size_t>(row)];
-    for (int column = 0; column < level::columns; ++column) {
+  for (int row = 0; row < static_cast<int>(map.size()); ++row) {
+    const std::string &line = map[static_cast<std::size_t>(row)];
+    for (int column = 0; column < static_cast<int>(line.size()); ++column) {
       const char cell = line[column];
       if (cell == level::beeSpawn) {
         bee = Motion{Kind::bee,

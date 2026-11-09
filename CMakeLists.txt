@@ -15,6 +15,7 @@ FetchContent_MakeAvailable(engine)
 add_executable(game
     src/main.cpp
     src/world.cpp
+    src/level.cpp
     src/server.cpp
     src/client.cpp
     src/interpolation.cpp

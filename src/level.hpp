@@ -1,12 +1,9 @@
 #pragma once
 
-#include <array>
 #include <string>
+#include <vector>
 
 namespace level {
-
-constexpr int columns = 64;
-constexpr int rows = 18;
 
 constexpr char empty = '.';
 constexpr char solid = '#';
@@ -23,38 +20,15 @@ constexpr char spikes = '^';    // rise and sink on a rhythm, one entity per run
 constexpr char horizontalMover = 'H';
 constexpr char verticalMover = 'V';
 
-// One char per 60px cell. The level is two 1920px screens wide; the camera
-// scrolls between them.
-constexpr std::array<const char *, rows> map = {
-    "................................................................", //  0
-    "................................................................", //  1
-    "................................................................", //  2
-    "................................................................", //  3
-    "................................................................", //  4
-    "................................................................", //  5
-    "..........###...................................................", //  6
-    "..................VVV...........................................", //  7
-    "....................................................VVV.........", //  8
-    "...###.................###....................====..............", //  9
-    ".........###....................................................", // 10
-    ".......................B............SSS.........................", // 11
-    "........................................................SSSS....", // 12
-    "..............HHH.............======....HHH.....................", // 13
-    "....###.................###......................===............", // 14
-    "..P....P.......................^^.P.............^^...........F..", // 15
-    "#########...###g##...######ff###########....######f####...#g####", // 16
-    "#########XXX###X##XXX######XX###########XXXX######X####XXX#X####", // 17
-};
+// One char per 60px cell, one string per row; every row has the same width.
+using Map = std::vector<std::string>;
 
-static_assert(
-    [] {
-      for (const char *line : map) {
-        if (std::char_traits<char>::length(line) != columns) {
-          return false;
-        }
-      }
-      return true;
-    }(),
-    "every map row must be `columns` wide");
+// Every process loads the same file, so their maps (and the order of the moving
+// objects in them) agree.
+inline const std::string path = GAME_ASSET_DIR "game/level.txt";
+
+// Throws std::runtime_error if the file can't be read, is empty, or has rows of
+// different widths.
+Map load(const std::string &path);
 
 } // namespace level

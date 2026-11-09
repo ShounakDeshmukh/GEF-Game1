@@ -68,7 +68,8 @@ int runServer(int port) {
   const std::string endpoint = "tcp://*:" + std::to_string(port);
   net::sessionServer server(endpoint);
 
-  const std::vector<world::Motion> motions = world::motions();
+  const std::vector<world::Motion> motions =
+      world::motions(level::load(level::path));
   engine::Scene scene;
   const std::vector<engine::EntityId> objects =
       world::spawn(scene, motions, std::nullopt);

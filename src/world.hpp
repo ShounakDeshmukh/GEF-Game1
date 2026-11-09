@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 // The server-driven part of the level, shared by the server and every client.
@@ -16,8 +17,6 @@ constexpr float playerSize = 120.f;
 constexpr float beeSize = 60.f;
 constexpr float goalSize = 60.f;
 constexpr std::int64_t ticksPerSecond = 60;
-constexpr float levelWidth = level::columns * tileSize;
-constexpr float levelHeight = level::rows * tileSize;
 
 enum class Kind { platform, bee };
 
@@ -42,7 +41,10 @@ glm::vec2 cellPosition(int column, int row);
 
 // Length of the run of equal cells starting at column, or 0 if column is not
 // the run's first cell.
-int runAt(const char *line, int column);
+int runAt(const std::string &line, int column);
+
+float widthOf(const level::Map &map);
+float heightOf(const level::Map &map);
 
 glm::vec2 positionAt(const Motion &motion, float seconds);
 
@@ -51,9 +53,9 @@ glm::vec2 positionAt(const Motion &motion, float seconds);
 engine::networking::Bytes encodeStamp(std::int64_t tick);
 std::optional<std::int64_t> decodeStamp(const engine::networking::Bytes *extra);
 
-// Every moving object in level::map, in a fixed order (platforms in scan
+// Every moving object in map, in a fixed order (platforms in scan
 // order, then the bee). Index i is replicated as makeNetId(kServerId, i).
-std::vector<Motion> motions();
+std::vector<Motion> motions(const level::Map &map);
 
 // One entity per motion, in the same order.
 std::vector<engine::EntityId> spawn(engine::Scene &scene,

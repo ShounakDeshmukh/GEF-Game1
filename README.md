@@ -47,7 +47,7 @@ players learn the patterns by dying:
 
 ## Level objects
 
-The level is two screens wide (`src/level.hpp`). The camera scrolls when the player touches one of
+The level is two screens wide (`assets/game/level.txt`, one char per 60px cell; the chars are in `src/level.hpp`). The camera scrolls when the player touches one of
 the hidden scroll boundaries near the edges of the view.
 
 | Object | Map char | Components | Visible |

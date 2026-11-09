@@ -275,13 +275,16 @@ template <class Link> int play(Link &link) {
   engine::Scene scene;
 
   // Static level: built identically by every client and never replicated.
+  const level::Map map = level::load(level::path);
+  const float levelWidth = world::widthOf(map);
+  const float levelHeight = world::heightOf(map);
   const engine::Shape grassShape{.size = {tileSize, tileSize},
                                  .texture = terrainTexture};
   std::vector<engine::EntityId> terrain;
   engine::EntityId goal = 0;
-  for (int row = 0; row < level::rows; ++row) {
-    const char *line = level::map[static_cast<std::size_t>(row)];
-    for (int column = 0; column < level::columns; ++column) {
+  for (int row = 0; row < static_cast<int>(map.size()); ++row) {
+    const std::string &line = map[static_cast<std::size_t>(row)];
+    for (int column = 0; column < static_cast<int>(line.size()); ++column) {
       switch (const char cell = line[column]) {
       case level::solid:
       case level::ghost:
@@ -383,7 +386,7 @@ template <class Link> int play(Link &link) {
 
   // Server-driven objects: pre-built with textures, then bound to the server's
   // NetIds so its snapshots move them instead of spawning untextured copies.
-  const std::vector<world::Motion> motions = world::motions();
+  const std::vector<world::Motion> motions = world::motions(map);
   const std::vector<engine::EntityId> objects = world::spawn(
       scene, motions, world::Art{.platform = terrainTexture, .bee = beeSheet});
   std::vector<engine::EntityId> platforms;
@@ -415,11 +418,11 @@ template <class Link> int play(Link &link) {
   // Local view state: never replicated, every client scrolls on its own.
   const engine::EntityId cameraEntity = scene.createEntity();
   scene.add<Camera>(cameraEntity);
-  const auto addBoundary = [&scene](ScrollBoundary::Side side) {
+  const auto addBoundary = [&scene, levelHeight](ScrollBoundary::Side side) {
     const engine::EntityId boundary = scene.createEntity();
     scene.addCollider(
         boundary,
-        {.size = {boundaryReach, world::levelHeight + 2 * boundaryReach}});
+        {.size = {boundaryReach, levelHeight + 2 * boundaryReach}});
     scene.add<ScrollBoundary>(boundary, {side});
     return boundary;
   };
@@ -770,7 +773,7 @@ template <class Link> int play(Link &link) {
       }
       touchingGoal = onGoal;
       // A fast fall could tunnel through a zone in one tick.
-      if (position.y > world::levelHeight + playerSize) {
+      if (position.y > levelHeight + playerSize) {
         events.raise(ev::deathEvent{{}, playerNetId, fellCause}, next);
       }
 
@@ -795,7 +798,7 @@ template <class Link> int play(Link &link) {
                         ? position.x + playerSize - (viewWidth - scrollMargin)
                         : position.x - scrollMargin;
         });
-    cameraX = std::clamp(cameraX, 0.f, world::levelWidth - viewWidth);
+    cameraX = std::clamp(cameraX, 0.f, levelWidth - viewWidth);
     if (cameraX != camera.offset.x) {
       camera.offset.x = cameraX;
       placeBoundaries(scene, leftBoundary, rightBoundary, cameraX);
