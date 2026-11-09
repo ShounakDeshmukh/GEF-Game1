@@ -39,8 +39,8 @@ constexpr int windowHeight = 1080;
 constexpr float gravity = 2600.f;
 constexpr float moveSpeed = 380.f;
 constexpr float jumpSpeed = 1020.f;
-// Shift+Jump: about 1.5x the height of a normal jump.
-constexpr float highJumpSpeed = 1250.f;
+// Shift with a move key.
+constexpr float sprintSpeed = 1.6f * moveSpeed;
 
 // On death, the last moments replay in slow motion before the player respawns:
 // deathCamTicks of game time show deathCamSpeed times as much recording.
@@ -70,8 +70,8 @@ constexpr float spikeHeight = 34.f;
 // deathEvent::cause for spikes: not a NetId any entity can have.
 constexpr std::uint32_t spikesCause = engine::kNetIdLocalMask;
 
-constexpr std::array jumpKeys{SC::SDL_SCANCODE_SPACE, SC::SDL_SCANCODE_W,
-                              SC::SDL_SCANCODE_UP};
+constexpr std::array moveKeys{SC::SDL_SCANCODE_A, SC::SDL_SCANCODE_D,
+                              SC::SDL_SCANCODE_LEFT, SC::SDL_SCANCODE_RIGHT};
 
 constexpr int joinAttempts = 5;
 
@@ -473,17 +473,15 @@ template <class Link> int play(Link &link) {
 
   ev::eventManager events;
   ev::inputMapper keys;
-  for (const SC::SDL_Scancode jumpKey : jumpKeys) {
-    keys.addChord({SC::SDL_SCANCODE_LSHIFT, jumpKey});
+  // Any key order completes a chord, so pressing Shift mid-run starts a sprint.
+  for (const SC::SDL_Scancode moveKey : moveKeys) {
+    keys.addChord({SC::SDL_SCANCODE_LSHIFT, moveKey});
   }
   // Held move keys per direction: A and Left both count as left.
   int leftHeld = 0;
   int rightHeld = 0;
-  // This tick's input: a jump key went down, and a Shift+jump chord completed.
-  // Chords ignore key order, so the chord alone (Shift pressed while a jump key
-  // is held) doesn't jump.
-  bool jumpPressed = false;
-  bool highJumpChord = false;
+  int sprintChords = 0; // Shift+move chords currently held
+  bool jumpPressed = false; // this tick
   struct Score {
     int wins = 0;
     int deaths = 0;
@@ -542,7 +540,7 @@ template <class Link> int play(Link &link) {
   });
   events.subscribe<ev::inputChordEvent>(
       [&](const ev::inputChordEvent &e, engine::Scene &) {
-        highJumpChord = highJumpChord || e.pressed;
+        sprintChords += e.pressed ? 1 : -1;
       });
 
   // Only the local player's contacts with the bee, death zones, spikes, the
@@ -780,10 +778,11 @@ template <class Link> int play(Link &link) {
     // A dead player stays frozen where it died until its spawnEvent.
     if (alive) {
       engine::RigidBody &body = *scene.getRigidBody(player);
-      body.velocity.x = (rightHeld > 0 ? moveSpeed : 0.f) -
-                        (leftHeld > 0 ? moveSpeed : 0.f);
+      const float speed = sprintChords > 0 ? sprintSpeed : moveSpeed;
+      body.velocity.x =
+          (rightHeld > 0 ? speed : 0.f) - (leftHeld > 0 ? speed : 0.f);
       if (jumpPressed && grounded) {
-        body.velocity.y = highJumpChord ? -highJumpSpeed : -jumpSpeed;
+        body.velocity.y = -jumpSpeed;
       }
 
       physics.step(scene, ctx.dt);
@@ -838,7 +837,6 @@ template <class Link> int play(Link &link) {
       }
     }
     jumpPressed = false;
-    highJumpChord = false;
 
     // Touching a boundary moves the camera just enough to put the player back
     // on its edge; then the boundaries follow the view.

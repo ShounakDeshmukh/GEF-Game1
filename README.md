@@ -42,7 +42,7 @@ players learn the patterns by dying:
 
 - Move: `A`/`D` or the left/right arrow keys
 - Jump: `Space`, `W`, or the up arrow key
-- High jump (chord): hold left `Shift`, then jump
+- Sprint (chord): left `Shift` with a move key, in either order
 - Pause / unpause: `P`
 - Speed 0.5x / 1x / 2x: `1` / `2` / `3`
 - Toggle scaling mode: `F`
@@ -78,7 +78,7 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 
 | Event | Raised by | Handled by | Network |
 |---|---|---|---|
-| `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, high jump | local |
+| `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, sprint | local |
 | `collisionEvent` | client, for its player against the bee, death zones, spikes, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a `goalReached` claim, or a `pitfallDrop` | local |
 | `pitfallDrop`, `pitfallReturn` | client, after landing on a pitfall | client: hides the tile, then restores it | local |
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
