@@ -60,8 +60,6 @@ constexpr std::int64_t pitfallReturnTicks = 3 * world::ticksPerSecond;
 
 // The cropped spike sprite's height; spikes sit on the floor of their cell.
 constexpr float spikeHeight = 34.f;
-// Spikes are up for this long, then down for as long.
-constexpr std::int64_t spikesPeriodTicks = world::ticksPerSecond * 3 / 2;
 // deathEvent::cause for spikes: not a NetId any entity can have.
 constexpr std::uint32_t spikesCause = engine::kNetIdLocalMask;
 
@@ -250,8 +248,9 @@ template <class Link> int play(Link &link) {
       renderer.loadTexture(assetDir + "png/bridge.png");
   const engine::TextureId stoneTexture =
       renderer.loadTexture(assetDir + "png/terrain_stone_block.png");
-  const engine::TextureId spikesTexture =
-      renderer.loadTexture(assetDir + "png/spikes.png");
+  const engine::Shape spikesShape{
+      .size = {tileSize, spikeHeight},
+      .texture = renderer.loadTexture(assetDir + "png/spikes.png")};
   std::array<engine::SpriteSheetId, playerSheetFiles.size()> playerSheets{};
   std::ranges::transform(
       playerSheetFiles, playerSheets.begin(), [&](const char *file) {
@@ -335,16 +334,12 @@ template <class Link> int play(Link &link) {
         break;
       }
       case level::spikes: {
-        const int run = world::runAt(line, column);
-        if (run == 0) {
-          break;
-        }
+        // One per cell, so each cell springs on its own.
         const engine::EntityId trap = scene.createEntity();
         scene.transform(trap).position =
             world::cellPosition(column, row) +
             glm::vec2{0.f, tileSize - spikeHeight};
-        scene.addCollider(
-            trap, {.size = {static_cast<float>(run) * tileSize, spikeHeight}});
+        scene.addCollider(trap, {.size = spikesShape.size});
         scene.add<Spikes>(trap);
         break;
       }
@@ -482,9 +477,6 @@ template <class Link> int play(Link &link) {
   struct pitfallReturn : ev::simpleEvent {
     engine::EntityId tile = 0;
   };
-  struct spikesToggle : ev::simpleEvent {
-    engine::EntityId spikes = 0;
-  };
 
   // A chorded jump-key press is the high jump below, so skip it here.
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
@@ -516,8 +508,8 @@ template <class Link> int play(Link &link) {
         }
       });
 
-  // Only the local player's contacts with the bee, death zones, the flag and
-  // pitfalls it lands on are raised; terrain push-out stays in onTick.
+  // Only the local player's contacts with the bee, death zones, spikes, the
+  // flag and pitfalls it lands on are raised; terrain push-out stays in onTick.
   events.subscribe<ev::collisionEvent>(
       [&](const ev::collisionEvent &e, engine::Scene &scene) {
         if (Pitfall *pit = scene.get<Pitfall>(e.b)) {
@@ -532,6 +524,11 @@ template <class Link> int play(Link &link) {
           link.session.send(race::goalReached::kType,
                             race::goalReached{}.encode(), events.now());
           return;
+        }
+        // Hidden spikes spring up under the player, killing it.
+        if (Spikes *spikes = scene.get<Spikes>(e.b); spikes && !spikes->up) {
+          spikes->up = true;
+          scene.addShape(e.b, spikesShape);
         }
         // Death events carry NetIds, which every process agrees on.
         const std::uint32_t cause = e.b == bee ? beeNetId
@@ -552,21 +549,6 @@ template <class Link> int play(Link &link) {
         scene.addShape(e.tile, grassShape);
         scene.addCollider(e.tile, {.size = {tileSize, tileSize}});
         scene.get<Pitfall>(e.tile)->dropping = false;
-      });
-  // Each toggle schedules the next, so spikes cycle for the whole game.
-  events.subscribe<spikesToggle>(
-      [&](const spikesToggle &e, engine::Scene &scene) {
-        Spikes &spikes = *scene.get<Spikes>(e.spikes);
-        spikes.up = !spikes.up;
-        if (spikes.up) {
-          scene.addShape(e.spikes, {.size = scene.getCollider(e.spikes)->size,
-                                    .texture = spikesTexture,
-                                    .tiled = true});
-        } else {
-          scene.removeShape(e.spikes);
-        }
-        events.raise(spikesToggle{{}, e.spikes},
-                     events.now() + spikesPeriodTicks);
       });
   const auto addFeedLine = [&](std::string line) {
     feed.push_back(std::move(line));
@@ -651,6 +633,11 @@ template <class Link> int play(Link &link) {
         alive = true;
         grounded = false;
         riding.reset();
+        // Sprung spikes hide again, so the next run has to remember them.
+        scene.each<Spikes>([&scene](engine::EntityId trap, Spikes &spikes) {
+          spikes.up = false;
+          scene.removeShape(trap);
+        });
       });
 
   auto onTick = [&](const engine::TickContext &ctx) {
@@ -761,11 +748,8 @@ template <class Link> int play(Link &link) {
       touch(bee);
       scene.each<DeathZone>(
           [&](engine::EntityId zone, DeathZone &) { touch(zone); });
-      scene.each<Spikes>([&](engine::EntityId trap, const Spikes &spikes) {
-        if (spikes.up) {
-          touch(trap);
-        }
-      });
+      scene.each<Spikes>(
+          [&](engine::EntityId trap, const Spikes &) { touch(trap); });
       // Only on first contact, so standing on the flag doesn't repeat it.
       const bool onGoal = physics.isCollision(scene, player, goal);
       if (onGoal && !touchingGoal) {
@@ -825,13 +809,6 @@ template <class Link> int play(Link &link) {
                                        world::encodeStamp(ctx.tick));
     link.push(scene, ctx.tick);
   };
-
-  // Half the spike runs start a cycle late, so they don't all rise together.
-  std::int64_t spikesStart = 0;
-  scene.each<Spikes>([&](engine::EntityId trap, const Spikes &) {
-    events.raise(spikesToggle{{}, trap}, spikesStart);
-    spikesStart = spikesStart == 0 ? spikesPeriodTicks : 0;
-  });
 
   engine::SimulationThread sim(std::move(scene), gameTime, onTick);
   replays.emplace(events, sim, world::ticksPerSecond, replayKeyframeTicks,

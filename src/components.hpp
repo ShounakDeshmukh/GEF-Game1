@@ -18,7 +18,8 @@ struct Pitfall {
   bool dropping = false;
 };
 
-// Rise and sink on a fixed rhythm; deadly only while up.
+// Hidden until the player steps on them, then sprung (and drawn) until it
+// respawns.
 struct Spikes {
   bool up = false;
 };

@@ -33,7 +33,8 @@ players learn the patterns by dying:
 
 - Ghost blocks look like grass but can't be stood on.
 - Pitfalls are real grass that drops away 0.3 s after you land on it, and comes back 3 s later.
-- Spikes rise and sink every 1.5 s; alternate runs are out of step.
+- Spikes are hidden until you step on them, then spring up and kill you. They hide again when you
+  respawn, so the next run has to remember where they are.
 - The bee dashes along its path at 3x speed for 1 s out of every 5 (driven by the server).
 
 ## Controls
@@ -61,7 +62,7 @@ the hidden scroll boundaries near the edges of the view.
 | Death zone | `X` | Transform, Collider, `DeathZone` | no |
 | Ghost block | `g` | Transform, Shape (texture) | yes |
 | Pitfall | `f` | Transform, Shape (texture), Collider, `Pitfall` | until it drops |
-| Spikes | `^` | Transform, Collider, `Spikes`; Shape while up | while up |
+| Spikes | `^` | Transform, Collider, `Spikes`; Shape once sprung | once sprung |
 | Scroll boundary | none, 2 per client | Transform, Collider, `ScrollBoundary` | no |
 | Camera | none, 1 per client | Transform, `Camera` | no |
 
@@ -77,11 +78,10 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 | Event | Raised by | Handled by | Network |
 |---|---|---|---|
 | `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, high jump | local |
-| `collisionEvent` | client, for its player against the bee, death zones, raised spikes, the flag, and pitfalls it lands on | client: death, a `goalReached` claim, or a `pitfallDrop` | local |
+| `collisionEvent` | client, for its player against the bee, death zones, spikes, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a `goalReached` claim, or a `pitfallDrop` | local |
 | `pitfallDrop`, `pitfallReturn` | client, after landing on a pitfall | client: hides the tile, then restores it | local |
-| `spikesToggle` | client, at start and then by each toggle | client: raises or lowers a spike run, schedules the next toggle | local |
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
-| `spawnEvent` | client, after the death cam or a round reset | client: places the player, resumes recording | local |
+| `spawnEvent` | client, after the death cam or a round reset | client: places the player, hides sprung spikes, resumes recording | local |
 | `goalReached` | client collision handler | server: the first claim of a round wins | client -> server |
 | `roundWon` | server | client: scoreboard, reset to the start | server -> all clients |
 | `replayRecordStart`, `replayPlayStart`, `replayPlayStop` | client death and spawn handlers | engine `replayController` | local |
