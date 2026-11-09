@@ -12,6 +12,12 @@ struct SpawnPoint {};
 // Touching one sends the player back to a spawn point.
 struct DeathZone {};
 
+// A floor tile that drops away shortly after the player lands on it, then
+// comes back.
+struct Pitfall {
+  bool dropping = false;
+};
+
 // Touching one scrolls the camera. side is the view edge it guards.
 struct ScrollBoundary {
   enum class Side { left, right } side;

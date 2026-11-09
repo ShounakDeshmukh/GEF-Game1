@@ -16,6 +16,8 @@ constexpr char goal = 'F';
 constexpr char ledge = '='; // thin wooden ledge, one entity per run
 constexpr char stone = 'S'; // full-height stone block, one entity per run
 constexpr char deathZone = 'X'; // hidden, one entity per run
+constexpr char ghost = 'g';     // looks like grass, has no collider
+constexpr char pitfall = 'f';   // grass that drops away when stood on
 // A run of these is one server-driven moving platform.
 constexpr char horizontalMover = 'H';
 constexpr char verticalMover = 'V';
@@ -39,8 +41,8 @@ constexpr std::array<const char *, rows> map = {
     "..............HHH.............======....HHH.....................", // 13
     "....###.................###......................===............", // 14
     "..P....P..........................P..........................F..", // 15
-    "#########...######...###################....###########...######", // 16
-    "#########XXX######XXX###################XXXX###########XXX######", // 17
+    "#########...###g##...######ff###########....######f####...#g####", // 16
+    "#########XXX###X##XXX######XX###########XXXX######X####XXX#X####", // 17
 };
 
 static_assert(

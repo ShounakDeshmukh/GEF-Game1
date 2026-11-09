@@ -53,6 +53,11 @@ constexpr std::size_t cameraHistoryLength =
 // deathEvent::cause for a fall; a bee death names the bee's NetId instead.
 constexpr std::uint32_t fellCause = 0;
 
+// A pitfall gives way this long after the player lands on it, and is back in
+// time for the next attempt.
+constexpr std::int64_t pitfallDelayTicks = world::ticksPerSecond * 3 / 10;
+constexpr std::int64_t pitfallReturnTicks = 3 * world::ticksPerSecond;
+
 constexpr std::array jumpKeys{SC::SDL_SCANCODE_SPACE, SC::SDL_SCANCODE_W,
                               SC::SDL_SCANCODE_UP};
 
@@ -261,18 +266,28 @@ template <class Link> int play(Link &link) {
   engine::Scene scene;
 
   // Static level: built identically by every client and never replicated.
+  const engine::Shape grassShape{.size = {tileSize, tileSize},
+                                 .texture = terrainTexture};
   std::vector<engine::EntityId> terrain;
   engine::EntityId goal = 0;
   for (int row = 0; row < level::rows; ++row) {
     const char *line = level::map[static_cast<std::size_t>(row)];
     for (int column = 0; column < level::columns; ++column) {
       switch (const char cell = line[column]) {
-      case level::solid: {
+      case level::solid:
+      case level::ghost:
+      case level::pitfall: {
         const engine::EntityId tile = scene.createEntity();
         scene.transform(tile).position = world::cellPosition(column, row);
-        scene.addShape(
-            tile, {.size = {tileSize, tileSize}, .texture = terrainTexture});
+        scene.addShape(tile, grassShape);
+        // A ghost is only drawn: nothing to stand on.
+        if (cell == level::ghost) {
+          break;
+        }
         scene.addCollider(tile, {.size = {tileSize, tileSize}});
+        if (cell == level::pitfall) {
+          scene.add<Pitfall>(tile);
+        }
         terrain.push_back(tile);
         break;
       }
@@ -435,6 +450,12 @@ template <class Link> int play(Link &link) {
   std::deque<std::pair<std::int64_t, float>> cameraHistory;
   std::atomic<float> deathCamX{0.f}; // sim -> main
   struct deathCamOver : ev::simpleEvent {};
+  struct pitfallDrop : ev::simpleEvent {
+    engine::EntityId tile = 0;
+  };
+  struct pitfallReturn : ev::simpleEvent {
+    engine::EntityId tile = 0;
+  };
 
   // A chorded jump-key press is the high jump below, so skip it here.
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
@@ -466,10 +487,17 @@ template <class Link> int play(Link &link) {
         }
       });
 
-  // Only the local player's contacts with the bee, death zones and the flag are
-  // raised; terrain push-out stays in onTick.
+  // Only the local player's contacts with the bee, death zones, the flag and
+  // pitfalls it lands on are raised; terrain push-out stays in onTick.
   events.subscribe<ev::collisionEvent>(
-      [&](const ev::collisionEvent &e, engine::Scene &) {
+      [&](const ev::collisionEvent &e, engine::Scene &scene) {
+        if (Pitfall *pit = scene.get<Pitfall>(e.b)) {
+          if (!pit->dropping) {
+            pit->dropping = true;
+            events.raise(pitfallDrop{{}, e.b}, events.now() + pitfallDelayTicks);
+          }
+          return;
+        }
         // The server decides who won, so touching the flag is only a claim.
         if (e.b == goal) {
           link.session.send(race::goalReached::kType,
@@ -480,6 +508,20 @@ template <class Link> int play(Link &link) {
         events.raise(
             ev::deathEvent{{}, playerNetId, e.b == bee ? beeNetId : fellCause},
             events.now());
+      });
+  // A dropped pitfall is drawn and collided with again once it returns.
+  events.subscribe<pitfallDrop>(
+      [&](const pitfallDrop &e, engine::Scene &scene) {
+        scene.removeShape(e.tile);
+        scene.removeCollider(e.tile);
+        events.raise(pitfallReturn{{}, e.tile},
+                     events.now() + pitfallReturnTicks);
+      });
+  events.subscribe<pitfallReturn>(
+      [&](const pitfallReturn &e, engine::Scene &scene) {
+        scene.addShape(e.tile, grassShape);
+        scene.addCollider(e.tile, {.size = {tileSize, tileSize}});
+        scene.get<Pitfall>(e.tile)->dropping = false;
       });
   const auto addFeedLine = [&](std::string line) {
     feed.push_back(std::move(line));
@@ -643,10 +685,20 @@ template <class Link> int play(Link &link) {
 
       physics.step(scene, ctx.dt);
 
+      // Raised for the next tick, so its run() handles them before that tick's
+      // input.
+      const std::int64_t next = ctx.tick + 1;
+
       grounded = false;
       riding.reset();
       for (const engine::EntityId tile : terrain) {
-        grounded = resolveCollision(scene, physics, player, tile) || grounded;
+        if (!resolveCollision(scene, physics, player, tile)) {
+          continue;
+        }
+        grounded = true;
+        if (scene.has<Pitfall>(tile)) {
+          events.raise(ev::collisionEvent{{}, player, tile}, next);
+        }
       }
       for (std::size_t i = 0; i < platforms.size(); ++i) {
         if (resolveCollision(scene, physics, player, platforms[i])) {
@@ -655,9 +707,6 @@ template <class Link> int play(Link &link) {
         }
       }
 
-      // Raised for the next tick, so its run() handles them before that tick's
-      // input.
-      const std::int64_t next = ctx.tick + 1;
       const auto touch = [&](engine::EntityId other) {
         if (physics.isCollision(scene, player, other)) {
           events.raise(ev::collisionEvent{{}, player, other}, next);
