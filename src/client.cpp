@@ -38,6 +38,10 @@ constexpr float jumpSpeed = 1020.f;
 // Shift+Jump: about 1.5x the height of a normal jump.
 constexpr float highJumpSpeed = 1250.f;
 
+constexpr std::int64_t respawnDelayTicks = world::ticksPerSecond;
+// deathEvent::cause for a fall; a bee death names the bee's NetId instead.
+constexpr std::uint32_t fellCause = 0;
+
 constexpr std::array jumpKeys{SC::SDL_SCANCODE_SPACE, SC::SDL_SCANCODE_W,
                               SC::SDL_SCANCODE_UP};
 
@@ -333,12 +337,14 @@ template <class Link> int play(Link &link) {
       scene, motions, world::Art{.platform = terrainTexture, .bee = beeSheet});
   std::vector<engine::EntityId> platforms;
   engine::EntityId bee = 0;
+  engine::NetId beeNetId = 0;
   for (std::size_t i = 0; i < objects.size(); ++i) {
-    link.session.replicator().bind(
-        engine::makeNetId(engine::kServerId, static_cast<std::uint32_t>(i)),
-        objects[i]);
+    const engine::NetId netId =
+        engine::makeNetId(engine::kServerId, static_cast<std::uint32_t>(i));
+    link.session.replicator().bind(netId, objects[i]);
     if (motions[i].kind == world::Kind::bee) {
       bee = objects[i];
+      beeNetId = netId;
     } else {
       platforms.push_back(objects[i]);
     }
@@ -377,6 +383,7 @@ template <class Link> int play(Link &link) {
   // Everything below is captured by onTick and belongs to the sim thread once
   // it starts.
   PlayerState playerState = PlayerState::idle;
+  bool alive = true;
   bool grounded = false;
   bool touchingGoal = false;
   std::optional<std::size_t> riding; // index into platforms
@@ -428,6 +435,50 @@ template <class Link> int play(Link &link) {
         if (e.pressed) {
           jumpRequest = highJumpSpeed;
         }
+      });
+
+  // Only the local player's contacts with the bee, death zones and the flag are
+  // raised; terrain push-out stays in onTick.
+  events.subscribe<ev::collisionEvent>(
+      [&](const ev::collisionEvent &e, engine::Scene &) {
+        if (e.b == goal) {
+          engine::log::info("flag reached, level complete, now play again :)");
+          events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
+                       events.now());
+          return;
+        }
+        // Death events carry NetIds, which every process agrees on.
+        events.raise(
+            ev::deathEvent{{}, playerNetId, e.b == bee ? beeNetId : fellCause},
+            events.now());
+      });
+  events.subscribe<ev::deathEvent>(
+      [&](const ev::deathEvent &e, engine::Scene &scene) {
+        if (!alive) {
+          return;
+        }
+        alive = false;
+        engine::log::info("{}, respawning in {} ticks",
+                          e.cause == beeNetId ? "stung by the bee"
+                                              : "fell into a pit",
+                          respawnDelayTicks);
+        scene.getRigidBody(player)->velocity = {0.f, 0.f};
+        *scene.getSpriteAnimation(player) =
+            engine::SpriteAnimation::uniform(playerSheet, {frameHit}, 1.f);
+        const glm::vec2 at = respawnFor(spawns, scene.transform(player).position.x);
+        events.raise(ev::spawnEvent{{}, playerNetId, self, at},
+                     events.now() + respawnDelayTicks);
+      });
+  events.subscribe<ev::spawnEvent>(
+      [&](const ev::spawnEvent &e, engine::Scene &scene) {
+        scene.transform(player).position = e.position;
+        scene.getRigidBody(player)->velocity = {0.f, 0.f};
+        playerState = PlayerState::idle;
+        *scene.getSpriteAnimation(player) =
+            animationFor(playerState, playerSheet);
+        alive = true;
+        grounded = false;
+        riding.reset();
       });
 
   auto onTick = [&](const engine::TickContext &ctx) {
@@ -496,58 +547,58 @@ template <class Link> int play(Link &link) {
     keys.raise(events, ctx.keyboard, ctx.previousKeyboard, ctx.tick);
     events.run(scene, ctx.tick);
 
-    engine::RigidBody &body = *scene.getRigidBody(player);
-    body.velocity.x = (rightHeld > 0 ? moveSpeed : 0.f) -
-                      (leftHeld > 0 ? moveSpeed : 0.f);
-    if (jumpRequest && grounded) {
-      body.velocity.y = -*jumpRequest;
-    }
-    jumpRequest.reset();
-
-    physics.step(scene, ctx.dt);
-
-    grounded = false;
-    riding.reset();
-    for (const engine::EntityId tile : terrain) {
-      grounded = resolveCollision(scene, physics, player, tile) || grounded;
-    }
-    for (std::size_t i = 0; i < platforms.size(); ++i) {
-      if (resolveCollision(scene, physics, player, platforms[i])) {
-        grounded = true;
-        riding = i;
+    // A dead player stays frozen where it died until its spawnEvent.
+    if (alive) {
+      engine::RigidBody &body = *scene.getRigidBody(player);
+      body.velocity.x = (rightHeld > 0 ? moveSpeed : 0.f) -
+                        (leftHeld > 0 ? moveSpeed : 0.f);
+      if (jumpRequest && grounded) {
+        body.velocity.y = -*jumpRequest;
       }
-    }
 
-    const auto respawn = [&](glm::vec2 at) {
-      position = at;
-      body.velocity = {0.f, 0.f};
+      physics.step(scene, ctx.dt);
+
       grounded = false;
       riding.reset();
-    };
+      for (const engine::EntityId tile : terrain) {
+        grounded = resolveCollision(scene, physics, player, tile) || grounded;
+      }
+      for (std::size_t i = 0; i < platforms.size(); ++i) {
+        if (resolveCollision(scene, physics, player, platforms[i])) {
+          grounded = true;
+          riding = i;
+        }
+      }
 
-    if (physics.isCollision(scene, player, bee)) {
-      engine::log::info("hit the bee, back to the last spawn point");
-      respawn(respawnFor(spawns, position.x));
+      // Raised for the next tick, so its run() handles them before that tick's
+      // input.
+      const std::int64_t next = ctx.tick + 1;
+      const auto touch = [&](engine::EntityId other) {
+        if (physics.isCollision(scene, player, other)) {
+          events.raise(ev::collisionEvent{{}, player, other}, next);
+        }
+      };
+      touch(bee);
+      scene.each<DeathZone>(
+          [&](engine::EntityId zone, DeathZone &) { touch(zone); });
+      // Only on first contact, so standing on the flag doesn't repeat it.
+      const bool onGoal = physics.isCollision(scene, player, goal);
+      if (onGoal && !touchingGoal) {
+        touch(goal);
+      }
+      touchingGoal = onGoal;
+      // A fast fall could tunnel through a zone in one tick.
+      if (position.y > world::levelHeight + playerSize) {
+        events.raise(ev::deathEvent{{}, playerNetId, fellCause}, next);
+      }
+
+      const PlayerState desired = stateFor(body.velocity, grounded);
+      if (desired != playerState) {
+        playerState = desired;
+        *scene.getSpriteAnimation(player) = animationFor(desired, playerSheet);
+      }
     }
-    bool inDeathZone = false;
-    scene.each<DeathZone>([&](engine::EntityId zone, DeathZone &) {
-      inDeathZone = inDeathZone || physics.isCollision(scene, player, zone);
-    });
-    if (inDeathZone) {
-      engine::log::info("fell into a death zone, back to the last spawn point");
-      respawn(respawnFor(spawns, position.x));
-    }
-    // A fast fall could tunnel through a zone in one tick.
-    if (position.y > world::levelHeight + playerSize) {
-      engine::log::info("fell out of the level, back to the last spawn point");
-      respawn(respawnFor(spawns, position.x));
-    }
-    const bool onGoal = physics.isCollision(scene, player, goal);
-    if (onGoal && !touchingGoal) {
-      engine::log::info("flag reached, level complete, now play again :)");
-      respawn(startSpawn);
-    }
-    touchingGoal = onGoal;
+    jumpRequest.reset();
 
     // Touching a boundary moves the camera just enough to put the player back
     // on its edge; then the boundaries follow the view.
@@ -568,11 +619,6 @@ template <class Link> int play(Link &link) {
       placeBoundaries(scene, leftBoundary, rightBoundary, cameraX);
     }
 
-    const PlayerState desired = stateFor(body.velocity, grounded);
-    if (desired != playerState) {
-      playerState = desired;
-      *scene.getSpriteAnimation(player) = animationFor(desired, playerSheet);
-    }
     engine::advanceAnimations(scene, ctx.dt);
 
     // Once per tick, so the send rate follows this client's own Timeline.
