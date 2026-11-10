@@ -62,14 +62,14 @@ the hidden scroll boundaries near the edges of the view.
 
 | Object | Map char | Components | Visible |
 |---|---|---|---|
-| Grass tile | `#` | Transform, Shape (texture), Collider | yes |
+| Grass | `#` | Transform, Shape (tiled texture), Collider; one entity per run | yes |
 | Wooden ledge | `=` | Transform, Shape (tiled texture), Collider | yes |
 | Stone block | `S` | Transform, Shape (tiled texture), Collider | yes |
 | Moving platform | `H`, `V` | Transform, Shape, Collider; server-replicated | yes |
 | Bee | `B` | Transform, Shape, Collider, SpriteAnimation; server-replicated | yes |
 | Spawn point | `P` | Transform, `SpawnPoint` | no |
 | Death zone | `X` | Transform, Collider, `DeathZone` | no |
-| Ghost block | `g` | Transform, Shape (texture) | yes |
+| Ghost block | `g` | Transform, Shape (tiled texture); one entity per run | yes |
 | Pitfall | `f` | Transform, Shape (texture), Collider, `Pitfall` | until it drops |
 | Spikes | `^` | Transform, Collider, `Spikes`; Shape once sprung | once sprung |
 | Saw | `s` | Transform, Shape, Collider, SpriteAnimation, `Saw` | yes |

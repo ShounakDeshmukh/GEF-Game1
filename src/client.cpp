@@ -328,22 +328,35 @@ template <class Link> int play(Link &link) {
     const std::string &line = map[static_cast<std::size_t>(row)];
     for (int column = 0; column < static_cast<int>(line.size()); ++column) {
       switch (const char cell = line[column]) {
+      // One entity per run: the replay recorder encodes every entity each
+      // tick, and the grass texture is one tile, so a tiled run looks the same.
       case level::solid:
-      case level::ghost:
+      case level::ghost: {
+        const int run = world::runAt(line, column);
+        if (run == 0) {
+          break;
+        }
+        const glm::vec2 size{static_cast<float>(run) * tileSize, tileSize};
+        const engine::EntityId block = scene.createEntity();
+        scene.transform(block).position = world::cellPosition(column, row);
+        scene.addShape(block,
+                       {.size = size, .texture = terrainTexture, .tiled = true});
+        // A ghost is only drawn: nothing to stand on.
+        if (cell == level::solid) {
+          scene.addCollider(block, {.size = size});
+          terrain.push_back(block);
+        }
+        break;
+      }
+      // One per cell, so each drops on its own.
       case level::pitfall: {
         const engine::EntityId tile = scene.createEntity();
         scene.transform(tile).position = world::cellPosition(column, row);
         scene.addShape(tile, grassShape);
-        // A ghost is only drawn: nothing to stand on.
-        if (cell == level::ghost) {
-          break;
-        }
         scene.addCollider(tile, {.size = {tileSize, tileSize}});
-        if (cell == level::pitfall) {
-          scene.add<Pitfall>(
-              tile, {.index = static_cast<std::uint32_t>(pitfallTiles.size())});
-          pitfallTiles.push_back(tile);
-        }
+        scene.add<Pitfall>(
+            tile, {.index = static_cast<std::uint32_t>(pitfallTiles.size())});
+        pitfallTiles.push_back(tile);
         terrain.push_back(tile);
         break;
       }
