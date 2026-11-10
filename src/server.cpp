@@ -1,15 +1,18 @@
 #include "modes.hpp"
+#include "pitfallEvents.hpp"
 #include "raceEvents.hpp"
 #include "world.hpp"
 
 #include <engine/engine.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <ranges>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -68,8 +71,8 @@ int runServer(int port) {
   const std::string endpoint = "tcp://*:" + std::to_string(port);
   net::sessionServer server(endpoint);
 
-  const std::vector<world::Motion> motions =
-      world::motions(level::load(level::path));
+  const level::Map map = level::load(level::path);
+  const std::vector<world::Motion> motions = world::motions(map);
   engine::Scene scene;
   const std::vector<engine::EntityId> objects =
       world::spawn(scene, motions, std::nullopt);
@@ -123,6 +126,32 @@ int runServer(int port) {
       /*fromNetwork=*/true);
   events.subscribe<roundOpened>(
       [&](const roundOpened &, engine::Scene &) { roundOpen = true; });
+
+  // dropping[i] covers a pitfall's whole cycle, from the first touch until it
+  // is back, so touches meanwhile are ignored.
+  std::vector<bool> dropping(static_cast<std::size_t>(
+      std::ranges::count(map | std::views::join, level::pitfall)));
+  events.subscribe<pitfalls::touched>(
+      [&](const pitfalls::touched &e, engine::Scene &) {
+        if (e.index >= dropping.size() || dropping[e.index]) {
+          return;
+        }
+        dropping[e.index] = true;
+        events.raise(pitfalls::changed{{}, e.index, true},
+                     events.now() + pitfalls::dropDelayTicks);
+      },
+      /*fromNetwork=*/true);
+  // Raised here on the server's own clock, then broadcast as it happens.
+  events.subscribe<pitfalls::changed>(
+      [&](const pitfalls::changed &e, engine::Scene &) {
+        server.broadcast(pitfalls::changed::kType, e.encode(), events.now());
+        if (e.down) {
+          events.raise(pitfalls::changed{{}, e.index, false},
+                       events.now() + pitfalls::returnTicks);
+        } else {
+          dropping[e.index] = false;
+        }
+      });
 
   // sim thread: owns the Scene and every replicator call.
   engine::SimulationThread sim(

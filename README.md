@@ -37,7 +37,8 @@ players learn the patterns by dying:
 - A staircase from the start and the vertical moving platform lead up to a sky bridge across the
   top: a shortcut with a ghost gap, a saw, a pitfall and a hidden spike. Falling off isn't fatal,
   it just drops you back to the lower route.
-- Pitfalls are real grass that drops away 0.3 s after you land on it, and comes back 3 s later.
+- Pitfalls are real grass that drops away 0.3 s after anyone lands on it, and comes back 3 s later.
+  The server times them, so every window loses the same floor at the same moment.
 - Spikes are hidden until you step on them, then spring up and kill you. They hide again when you
   respawn, so the next run has to remember where they are.
 - Saws are always visible. Step into the hidden zone in front of one and it rushes across the zone
@@ -88,9 +89,10 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 | Event | Raised by | Handled by | Network |
 |---|---|---|---|
 | `inputEvent`, `inputChordEvent` | `inputMapper`, from each tick's keyboard | client: move, jump, sprint | local |
-| `collisionEvent` | client, for its player against the bee, death zones, spikes, saws, saw triggers, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a saw rush, a `goalReached` claim, or a `pitfallDrop` | local |
+| `collisionEvent` | client, for its player against the bee, death zones, spikes, saws, saw triggers, the flag, and pitfalls it lands on | client: death (springing hidden spikes), a saw rush, a `goalReached` claim, or a `pitfalls::touched` claim | local |
 | `sawReturn` | client, a second after a saw finishes its rush | client: sends the saw rolling home | local |
-| `pitfallDrop`, `pitfallReturn` | client, after landing on a pitfall | client: hides the tile, then restores it | local |
+| `pitfalls::touched` | client collision handler | server: starts that pitfall's drop unless it is already dropping | client -> server |
+| `pitfalls::changed` | server, 0.3 s after the first touch, then 3 s later | server: broadcasts it; client: hides the tile, then restores it | server -> all clients |
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
 | `spawnEvent` | client, after the death cam or a round reset | client: places the player, hides sprung spikes, resumes recording | local |
 | `goalReached` | client collision handler | server: the first claim of a round wins | client -> server |

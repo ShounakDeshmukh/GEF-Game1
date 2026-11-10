@@ -3,6 +3,8 @@
 #include <engine/ids.hpp>
 #include <glm/vec2.hpp>
 
+#include <cstdint>
+
 // Game-defined components. The engine stores them through add<T>/get<T>/each<T>
 // without knowing their types. Entities with these but no Shape are never
 // drawn: they are the level's hidden objects.
@@ -13,10 +15,11 @@ struct SpawnPoint {};
 // Touching one sends the player back to a spawn point.
 struct DeathZone {};
 
-// A floor tile that drops away shortly after the player lands on it, then
-// comes back.
+// A floor tile that drops away shortly after a player lands on it, then comes
+// back. The server times it; index names it on the network.
 struct Pitfall {
-  bool dropping = false;
+  std::uint32_t index = 0;
+  bool dropping = false; // from our touch (or the server's drop) until it's back
 };
 
 // Hidden until the player steps on them, then sprung (and drawn) until it

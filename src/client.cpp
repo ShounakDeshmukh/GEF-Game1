@@ -2,6 +2,7 @@
 #include "interpolation.hpp"
 #include "level.hpp"
 #include "modes.hpp"
+#include "pitfallEvents.hpp"
 #include "raceEvents.hpp"
 #include "world.hpp"
 
@@ -64,11 +65,6 @@ constexpr std::size_t cameraHistoryLength =
     replayKeyframes * replayKeyframeTicks;
 // deathEvent::cause for a fall; a bee death names the bee's NetId instead.
 constexpr std::uint32_t fellCause = 0;
-
-// A pitfall gives way this long after the player lands on it, and is back in
-// time for the next attempt.
-constexpr std::int64_t pitfallDelayTicks = world::ticksPerSecond * 3 / 10;
-constexpr std::int64_t pitfallReturnTicks = 3 * world::ticksPerSecond;
 
 // The cropped spike sprite's height; spikes sit on the floor of their cell.
 constexpr float spikeHeight = 34.f;
@@ -324,6 +320,7 @@ template <class Link> int play(Link &link) {
   const engine::Shape grassShape{.size = {tileSize, tileSize},
                                  .texture = terrainTexture};
   std::vector<engine::EntityId> terrain;
+  std::vector<engine::EntityId> pitfallTiles; // by pitfall index
   std::vector<engine::EntityId> sawTriggers; // linked to saws after the scan
   engine::EntityId goal = 0;
   for (int row = 0; row < static_cast<int>(map.size()); ++row) {
@@ -342,7 +339,9 @@ template <class Link> int play(Link &link) {
         }
         scene.addCollider(tile, {.size = {tileSize, tileSize}});
         if (cell == level::pitfall) {
-          scene.add<Pitfall>(tile);
+          scene.add<Pitfall>(
+              tile, {.index = static_cast<std::uint32_t>(pitfallTiles.size())});
+          pitfallTiles.push_back(tile);
         }
         terrain.push_back(tile);
         break;
@@ -580,12 +579,6 @@ template <class Link> int play(Link &link) {
   std::atomic<engine::ClientId> roundWinner{0};
   struct deathCamOver : ev::simpleEvent {};
   struct feedLineExpired : ev::simpleEvent {};
-  struct pitfallDrop : ev::simpleEvent {
-    engine::EntityId tile = 0;
-  };
-  struct pitfallReturn : ev::simpleEvent {
-    engine::EntityId tile = 0;
-  };
 
   events.subscribe<ev::inputEvent>([&](const ev::inputEvent &e, engine::Scene &) {
     const int change = e.pressed ? 1 : -1;
@@ -625,10 +618,13 @@ template <class Link> int play(Link &link) {
           }
           return;
         }
+        // The server times the drop, so every window loses the same floor.
         if (Pitfall *pit = scene.get<Pitfall>(e.b)) {
           if (!pit->dropping) {
             pit->dropping = true;
-            events.raise(pitfallDrop{{}, e.b}, events.now() + pitfallDelayTicks);
+            link.session.send(pitfalls::touched::kType,
+                              pitfalls::touched{{}, pit->index}.encode(),
+                              events.now());
           }
           return;
         }
@@ -650,20 +646,25 @@ template <class Link> int play(Link &link) {
                                                              : fellCause;
         events.raise(ev::deathEvent{{}, playerNetId, cause}, events.now());
       });
-  // A dropped pitfall is drawn and collided with again once it returns.
-  events.subscribe<pitfallDrop>(
-      [&](const pitfallDrop &e, engine::Scene &scene) {
-        scene.removeShape(e.tile);
-        scene.removeCollider(e.tile);
-        events.raise(pitfallReturn{{}, e.tile},
-                     events.now() + pitfallReturnTicks);
-      });
-  events.subscribe<pitfallReturn>(
-      [&](const pitfallReturn &e, engine::Scene &scene) {
-        scene.addShape(e.tile, grassShape);
-        scene.addCollider(e.tile, {.size = {tileSize, tileSize}});
-        scene.get<Pitfall>(e.tile)->dropping = false;
-      });
+  // A client that joins mid-drop sees only the return, so both directions check
+  // the tile's current state.
+  events.subscribe<pitfalls::changed>(
+      [&](const pitfalls::changed &e, engine::Scene &scene) {
+        if (e.index >= pitfallTiles.size()) {
+          return;
+        }
+        const engine::EntityId tile = pitfallTiles[e.index];
+        const bool up = scene.getCollider(tile) != nullptr;
+        if (e.down && up) {
+          scene.removeShape(tile);
+          scene.removeCollider(tile);
+        } else if (!e.down && !up) {
+          scene.addShape(tile, grassShape);
+          scene.addCollider(tile, {.size = {tileSize, tileSize}});
+        }
+        scene.get<Pitfall>(tile)->dropping = e.down;
+      },
+      /*fromNetwork=*/true);
   const auto publishHud = [&] {
     std::vector<std::string> lines;
     lines.reserve(feed.size() + scores.size());
