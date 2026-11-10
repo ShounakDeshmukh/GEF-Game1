@@ -96,7 +96,8 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 | `deathEvent` | client collision handler, or a fall out of the level | client: death cam; server: relays it | client -> server -> all clients |
 | `spawnEvent` | client, after the death cam or a round reset | client: places the player, hides sprung spikes, resumes recording | local |
 | `goalReached` | client collision handler | server: the first claim of a round wins | client -> server |
-| `roundWon` | server | client: scoreboard, restart countdown, reset to the start | server -> all clients |
+| `roundWon` | server | client: scoreboard, shows the restart countdown | server -> all clients |
+| `race::countdown` | server, each second after a win | server: broadcasts it, reopens the round at 0; client: updates the countdown, resets to the start at 0 | server -> all clients |
 | `replayRecordStart`, `replayPlayStart`, `replayPlayStop` | client death and spawn handlers | engine `replayController` | local |
 
 The server accepts a `deathEvent` only for the sender's own player, and takes the `goalReached`

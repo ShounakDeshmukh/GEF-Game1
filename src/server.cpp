@@ -109,8 +109,7 @@ int runServer(int port) {
       /*fromNetwork=*/true);
 
   // The first goalReached of a round wins it; later ones are ignored until the
-  // round reopens, after every client has reset.
-  struct roundOpened : ev::simpleEvent {};
+  // countdown reopens the round.
   bool roundOpen = true;
   events.subscribe<race::goalReached>(
       [&](const race::goalReached &e, engine::Scene &) {
@@ -121,11 +120,18 @@ int runServer(int port) {
         engine::log::info("P{} won the round", e.from);
         server.broadcast(race::roundWon::kType,
                          race::roundWon{{}, e.from}.encode(), events.now());
-        events.raise(roundOpened{}, events.now() + race::resetDelayTicks);
+        for (int left = race::resetDelaySeconds - 1; left >= 0; --left) {
+          events.raise(race::countdown{{}, static_cast<std::uint8_t>(left)},
+                       events.now() + (race::resetDelaySeconds - left) *
+                                          world::ticksPerSecond);
+        }
       },
       /*fromNetwork=*/true);
-  events.subscribe<roundOpened>(
-      [&](const roundOpened &, engine::Scene &) { roundOpen = true; });
+  events.subscribe<race::countdown>(
+      [&](const race::countdown &e, engine::Scene &) {
+        server.broadcast(race::countdown::kType, e.encode(), events.now());
+        roundOpen = e.seconds == 0;
+      });
 
   // dropping[i] covers a pitfall's whole cycle, from the first touch until it
   // is back, so touches meanwhile are ignored.

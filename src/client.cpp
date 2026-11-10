@@ -570,10 +570,6 @@ template <class Link> int play(Link &link) {
   struct sawReturn : ev::simpleEvent {
     engine::EntityId saw = 0;
   };
-  // Seconds until the round restarts; 0 clears the countdown.
-  struct restartCountdown : ev::simpleEvent {
-    int seconds = 0;
-  };
   // sim -> main: the countdown on screen, and whose win it follows.
   std::atomic<int> restartIn{0};
   std::atomic<engine::ClientId> roundWinner{0};
@@ -707,27 +703,25 @@ template <class Link> int play(Link &link) {
                             : cause == sawCause    ? "got sawed"
                                                    : "fell into a pit"));
   };
-  // Every player, winner included, goes back to the start once the win has
-  // been shown for a moment.
   events.subscribe<race::roundWon>(
       [&](const race::roundWon &e, engine::Scene &) {
         ++scores[e.winner].wins;
         addFeedLine(e.winner == self ? "you won the race!"
                                      : fmt::format("P{} won the race!", e.winner));
-        events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
-                     events.now() + race::resetDelayTicks);
         roundWinner = e.winner;
-        for (int left = race::resetDelaySeconds; left >= 0; --left) {
-          events.raise(restartCountdown{{}, left},
-                       events.now() + (race::resetDelaySeconds - left) *
-                                          world::ticksPerSecond);
+        restartIn = race::resetDelaySeconds;
+      },
+      /*fromNetwork=*/true);
+  // Every player, winner included, goes back to the start when it reaches 0.
+  events.subscribe<race::countdown>(
+      [&](const race::countdown &e, engine::Scene &) {
+        restartIn = e.seconds;
+        if (e.seconds == 0) {
+          events.raise(ev::spawnEvent{{}, playerNetId, self, startSpawn},
+                       events.now());
         }
       },
       /*fromNetwork=*/true);
-  events.subscribe<restartCountdown>(
-      [&](const restartCountdown &e, engine::Scene &) {
-        restartIn = e.seconds;
-      });
   // Local deaths are raised by the collision handler and sent to the server;
   // remote ones are the server relaying other players' deaths.
   events.subscribe<ev::deathEvent>(
