@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -601,46 +602,66 @@ template <class Link> int play(Link &link) {
         sprintChords += e.pressed ? 1 : -1;
       });
 
-  // Only the local player's contacts with the bee, death zones, spikes, saws,
-  // saw triggers, the flag and pitfalls it lands on are raised; terrain
-  // push-out stays in onTick.
+  // What touching each trap, trigger or the flag does, by entity: each kind
+  // registers its own handler, so the collision event only looks one up. Only
+  // the local player's contacts with these (pitfalls only when it lands on
+  // them) are raised; terrain push-out stays in onTick.
+  using TouchHandler = std::function<void(engine::EntityId, engine::Scene &)>;
+  std::unordered_map<engine::EntityId, TouchHandler> onTouch;
+  // Death events carry NetIds, which every process agrees on.
+  const auto kills = [&](std::uint32_t cause) -> TouchHandler {
+    return [&, cause](engine::EntityId, engine::Scene &) {
+      events.raise(ev::deathEvent{{}, playerNetId, cause}, events.now());
+    };
+  };
+  onTouch.emplace(bee, kills(beeNetId));
+  scene.each<DeathZone>([&](engine::EntityId zone, DeathZone &) {
+    onTouch.emplace(zone, kills(fellCause));
+  });
+  scene.each<Saw>([&](engine::EntityId trap, Saw &) {
+    onTouch.emplace(trap, kills(sawCause));
+  });
+  // Hidden spikes spring up under the player, killing it.
+  const TouchHandler spiked = kills(spikesCause);
+  scene.each<Spikes>([&](engine::EntityId trap, Spikes &) {
+    onTouch.emplace(trap, [&](engine::EntityId trap, engine::Scene &scene) {
+      if (Spikes &spikes = *scene.get<Spikes>(trap); !spikes.up) {
+        spikes.up = true;
+        scene.addShape(trap, spikesShape);
+      }
+      spiked(trap, scene);
+    });
+  });
+  scene.each<SawTrigger>([&](engine::EntityId trigger, SawTrigger &) {
+    onTouch.emplace(trigger, [](engine::EntityId trigger, engine::Scene &scene) {
+      const SawTrigger &zone = *scene.get<SawTrigger>(trigger);
+      if (Saw &saw = *scene.get<Saw>(zone.saw); saw.state == Saw::State::resting) {
+        saw.state = Saw::State::rushing;
+        saw.targetX = zone.targetX;
+      }
+    });
+  });
+  // The server times the drop, so every window loses the same floor.
+  scene.each<Pitfall>([&](engine::EntityId tile, Pitfall &) {
+    onTouch.emplace(tile, [&](engine::EntityId tile, engine::Scene &scene) {
+      if (Pitfall &pit = *scene.get<Pitfall>(tile); !pit.dropping) {
+        pit.dropping = true;
+        link.session.send(pitfalls::touched::kType,
+                          pitfalls::touched{{}, pit.index}.encode(),
+                          events.now());
+      }
+    });
+  });
+  // The server decides who won, so touching the flag is only a claim.
+  onTouch.emplace(goal, [&](engine::EntityId, engine::Scene &) {
+    link.session.send(race::goalReached::kType, race::goalReached{}.encode(),
+                      events.now());
+  });
   events.subscribe<ev::collisionEvent>(
       [&](const ev::collisionEvent &e, engine::Scene &scene) {
-        if (const SawTrigger *trigger = scene.get<SawTrigger>(e.b)) {
-          Saw &saw = *scene.get<Saw>(trigger->saw);
-          if (saw.state == Saw::State::resting) {
-            saw.state = Saw::State::rushing;
-            saw.targetX = trigger->targetX;
-          }
-          return;
+        if (const auto handler = onTouch.find(e.b); handler != onTouch.end()) {
+          handler->second(e.b, scene);
         }
-        // The server times the drop, so every window loses the same floor.
-        if (Pitfall *pit = scene.get<Pitfall>(e.b)) {
-          if (!pit->dropping) {
-            pit->dropping = true;
-            link.session.send(pitfalls::touched::kType,
-                              pitfalls::touched{{}, pit->index}.encode(),
-                              events.now());
-          }
-          return;
-        }
-        // The server decides who won, so touching the flag is only a claim.
-        if (e.b == goal) {
-          link.session.send(race::goalReached::kType,
-                            race::goalReached{}.encode(), events.now());
-          return;
-        }
-        // Hidden spikes spring up under the player, killing it.
-        if (Spikes *spikes = scene.get<Spikes>(e.b); spikes && !spikes->up) {
-          spikes->up = true;
-          scene.addShape(e.b, spikesShape);
-        }
-        // Death events carry NetIds, which every process agrees on.
-        const std::uint32_t cause = e.b == bee ? beeNetId
-                                    : scene.has<Spikes>(e.b) ? spikesCause
-                                    : scene.has<Saw>(e.b)    ? sawCause
-                                                             : fellCause;
-        events.raise(ev::deathEvent{{}, playerNetId, cause}, events.now());
       });
   // A client that joins mid-drop sees only the return, so both directions check
   // the tile's current state.
