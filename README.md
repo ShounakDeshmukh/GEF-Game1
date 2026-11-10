@@ -102,5 +102,7 @@ Gameplay runs on the engine's `eventManager` (engine v0.4.0), on the sim thread.
 
 The server accepts a `deathEvent` only for the sender's own player, and takes the `goalReached`
 claimant from the session rather than the payload, so a client can't kill or crown another player.
+In client-server mode it also drops a flag claim unless the claimant's last replicated hitbox is
+within a tile of the flag. Peers' positions never reach the server, so their claims are trusted.
 Pause, speed and scaling keys stay on the main thread: a paused sim doesn't tick, so it couldn't
 handle the event that unpauses it.

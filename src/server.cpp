@@ -12,7 +12,9 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -29,6 +31,10 @@ namespace ev = engine::events;
 constexpr float beeBurstEvery = 5.f;
 constexpr float beeBurstLength = 1.f;
 constexpr float beeBurstSpeed = 3.f;
+
+// How far a client's last replicated hitbox may be from the flag when it claims
+// it, since that position lags the claim by a tick or two.
+constexpr float goalClaimSlack = world::tileSize;
 
 std::atomic<bool> stopRequested{false};
 
@@ -65,6 +71,42 @@ void logRates(
   previous = std::move(current);
 }
 
+glm::vec2 goalPosition(const level::Map &map) {
+  for (int row = 0; row < static_cast<int>(map.size()); ++row) {
+    const std::size_t column = map[static_cast<std::size_t>(row)].find(level::goal);
+    if (column != std::string::npos) {
+      return world::cellPosition(static_cast<int>(column), row);
+    }
+  }
+  throw std::runtime_error("the level has no flag");
+}
+
+// Peers publish their players straight to each other, so the server has no
+// position to check and takes their word for it.
+bool claimPlausible(net::sessionServer &server, const engine::Scene &scene,
+                    engine::ClientId claimant, glm::vec2 goal) {
+  const std::vector<engine::networking::clientInfo> roster = server.roster();
+  const auto found = std::ranges::find(roster, claimant,
+                                       &engine::networking::clientInfo::id);
+  if (found != roster.end() && !found->peerEndpoint.empty()) {
+    return true;
+  }
+  // A client's player is the only entity it tracks, so it has local index 0.
+  const std::optional<engine::EntityId> player =
+      server.replicator().entityOf(engine::makeNetId(claimant, 0));
+  const engine::Collider *hitbox =
+      player ? scene.getCollider(*player) : nullptr;
+  if (hitbox == nullptr) {
+    return false;
+  }
+  const glm::vec2 low = scene.transform(*player).position + hitbox->offset;
+  const glm::vec2 high = low + hitbox->size;
+  return low.x <= goal.x + world::goalSize + goalClaimSlack &&
+         high.x >= goal.x - goalClaimSlack &&
+         low.y <= goal.y + world::goalSize + goalClaimSlack &&
+         high.y >= goal.y - goalClaimSlack;
+}
+
 } // namespace
 
 int runServer(int port) {
@@ -73,6 +115,7 @@ int runServer(int port) {
 
   const level::Map map = level::load(level::path);
   const std::vector<world::Motion> motions = world::motions(map);
+  const glm::vec2 goal = goalPosition(map);
   engine::Scene scene;
   const std::vector<engine::EntityId> objects =
       world::spawn(scene, motions, std::nullopt);
@@ -112,8 +155,13 @@ int runServer(int port) {
   // countdown reopens the round.
   bool roundOpen = true;
   events.subscribe<race::goalReached>(
-      [&](const race::goalReached &e, engine::Scene &) {
+      [&](const race::goalReached &e, engine::Scene &scene) {
         if (!roundOpen) {
+          return;
+        }
+        if (!claimPlausible(server, scene, e.from, goal)) {
+          engine::log::warn("P{} claimed the flag from too far away; dropped",
+                            e.from);
           return;
         }
         roundOpen = false;
@@ -162,9 +210,9 @@ int runServer(int port) {
   // sim thread: owns the Scene and every replicator call.
   engine::SimulationThread sim(
       std::move(scene), gameTime, [&](const engine::TickContext &ctx) {
+        server.applyClientStates(ctx.scene);
         events.receive(server.drainMessages(), ctx.tick);
         events.run(ctx.scene, ctx.tick);
-        server.applyClientStates(ctx.scene);
         if (const auto update = worldSlot.take()) {
           for (std::size_t i = 0; i < objects.size(); ++i) {
             ctx.scene.transform(objects[i]).position = update->positions[i];
